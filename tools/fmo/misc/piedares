@@ -1,0 +1,60 @@
+#! /bin/csh
+
+#    PIEDA result grabber
+#       version 1.1
+# written Feburary 7, 2007
+# updated May 27, 2013
+#   Dmitri G. Fedorov
+#         AIST
+# creates one file for each of the 5 interaction components for a given fragment
+# Required FMO version:
+set reqver=4.2
+# Arguments: 1) fragment number, 2) GAMESS FMO output file
+# Output: CSV files that can be directly read by either GNUplot or Excel.
+# example:
+# piedares 3 FMOtuto.out
+# (this extracts all pair interaction energies involving fragment 3)
+#
+if($# != 2) then
+  echo Usage: to extract data for fragment 3 
+  echo piedares 3 GAMESS.out 
+  exit
+endif
+if(! -e $2) then
+  echo GAMESS output cannot be opened.
+  exit
+endif
+set curver=`grep Version <$2 | awk '{ print $2 }'`
+echo Required FMO version: $reqver or higher, your version: $curver.
+set curver2=`echo $curver | cut -d. -f 1,2 | tr . " "`
+set reqver2=`echo $reqver | cut -d. -f 1,2 | tr . " "`
+set ver=`echo $reqver2 $curver2 | awk '{ print ($1 > $3 || ($1 == $3 && $2 > $4))?"old":"new" }'`
+if( $ver == old ) then
+  echo Your GAMESS output is not supported.
+  exit 1
+endif
+set PIEDA=`grep "Pair interaction energy decomposition analysis" <$2`
+if("a$PIEDA" == a) then
+  echo This is not a PIEDA output. Exiting... 
+  exit 1
+endif 
+set tmp1=$2:r.tmp1
+set tmp2=$2:r.tmp2
+grep "^[0-9 ][0-9 ][0-9 ][0-9 ][0-9][0-9 ][0-9 ][0-9 ][0-9 ][0-9] [NCMSs][1-9]" <$2 >$tmp1
+set ncols=`head -1 <$tmp1 | wc -w`
+set i=1
+set n=6
+set names=`echo tot es ex ct di sol`
+while ($i <= $n)
+@ col=$i + 8 
+  set fn=$2:r.$names[$i].csv
+   awk <$tmp1 -v my=$1 -v c=$col '{ a=$1==my?$2:$2==my?$1:0; if(a!=0) printf "%4d,%7.2f,%8.4f,%9.3f\n",a,$5,$6,$c }' >$tmp2 
+   echo $1 0 0 0 | awk -v my=$1 -v c=$col '{ printf "%4d,%7.2f,%8.4f,%9.3f\n",my,$5,$6,$c }' >>$tmp2
+   sort -n <$tmp2 >$fn
+@ i++
+end 
+   awk <$tmp1 -v my=$1 '{ a=$1==my?$2:$2==my?$1:0; if(a!=0) printf "%4d,%7.2f,%8.4f,%9.3f,%9.3f,%9.3f,%9.3f,%9.3f,%9.3f\n",a,$5,$6,$9,$10,$11,$12,$13,$14 }' >$tmp2 
+   echo $1 0 0 0 0 0 0 0 0 | awk -v my=$1 -v c=$col '{ printf "%4d,%7.2f,%8.4f,%9.3f,%9.3f,%9.3f,%9.3f,%9.3f,%9.3f\n",my,$5,$6,$9,$10,$11,$12,$13,$14 }' >>$tmp2
+   sort -n <$tmp2 >$2:r.all.csv
+rm -f $tmp1 $tmp2
+echo Created $n individual component files "[$names]" and one combined "[all]".

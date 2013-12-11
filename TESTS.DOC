@@ -1,0 +1,98 @@
+                                              (6 May 2012)
+
+              ******************************
+              *                            *
+              * Section 3 - Input Examples *
+              *                            *
+              ******************************
+ 
+    The GAMESS distribution contains a number of short 
+input examples:
+   a) in a source code distribution, see
+         ~/gamess/tests/standard/exam*.inp
+   b) in a binary distribution for Apple Macintosh, see
+         ~/gamess/tests/standard/exam*.inp
+   c) in a binary distribution for Windows, see
+         C:\gamess.64\tests\exam*.inp    (or C:\gamess.32)
+Please see the summary table below to note what kinds of 
+calculations are included.
+
+   The primary usage of these input files is to introduce 
+the basic functionality of the program.  Running all of 
+these, and noting where in the log file the key results 
+contained in comments in the input files appear should 
+introduce the basics to a new user.  After that, explore 
+the more exotic keywords in the previous chapter, for the 
+number of examples in the test packet is deliberately kept 
+small, and each run is relatively simple.
+
+    Secondarily, running these tests serves as a simplistic 
+verification of the program's correct installation.  In 
+source code distributions, only, there is a script to check 
+the numerical results, see
+         ~/gamess/tests/standard/checktst
+to automatically check all results.  Binary distributions 
+can do this by hand, since the expected results are 
+contained in the input files.  Note that to keep the tests 
+small, the memory and CPU time required is trivially small.  
+This means that problems that might occur in larger runs 
+won't be detected, and that these tests are entirely 
+inappropriate for parallel execution.
+
+    The examples are:
+
+    Example           Description
+    -------           -----------
+     1          CH2 RHF geometry optimization
+     2          CH2 UHF + gradient
+     3          CH2 ROHF + gradient
+     4          CH2 GVB + gradient
+     5          CH2 RHF + CI gradient
+     6          CH2 MCSCF geometry optimization
+     7          HPO RHF + gradient
+     8          H2O RHF + MP2 gradient
+     9          H2O MCSCF + MCQDPT energy correction
+    10          H2O RHF + hessian (vibrational analysis)
+    11          HCN RHF Intrinsic Reaction Coordinate
+    12         HCCH closed shell DFT geometry opt.
+    13          H2O RHF properties
+    14          H2O CI transition moment
+    15          C2- GVB/ROHF on 2-pi-u state
+    16           Si GVB/ROHF on 3-P state
+    17          CH2 GVB/ROHF + hessian
+    18           P2 RHF + hessian, effective core pot.
+    19           NH spin-orbit coupling
+    20           I- exponent TRUDGE optimization
+    21        CH+H2 open shell TCSCF hessian
+    22         H3CN UHF + UMP2 gradient
+    23        SiH3- PM3 geometry optimization
+    24          H2O SCRF test case
+    25            ? internal coordinate example
+    26         H3PO localized orbital test
+    27          NH3 Dynamic Reaction Coordinate (ie, AIMD)
+    28      H2O-NH3 Morokuma/Kitaura energy decomposition
+    29       FNH2OH simple potential surface scan
+    30 HCONH2(H2O)3 effective fragment potential solvation
+    31        CH3OH PCM test case
+    32          HNO coupled cluster test
+    33          HCN ORMAS-MCSCF illustration
+    34         H2CO CIS optimization
+    35           As relativity via Douglas-Kroll
+    36         C2H4 MCSCF analytic hessian
+    37       (H2O)3 Fragment Molecular Orbital RHF
+    38         AsH3 model core potential geometry opt.
+    39          CH4 Raman and hyper-Raman spectra
+    40          CH2 minimum energy crossing point search
+    41           CO TDDFT excitation energy/gradient
+    42           CN open shell CC numerical gradient
+    43          CH4 heat of formation
+    44        (HF)6 divide-and-conquer MP2 energy
+    45          CH2 closed shell EOM-CCSD plus triples
+    46          NH2 open shell EOM-CCSD
+    47          Cl- ionization potential by IP-EOM3a
+
+The following will refuse to run in parallel:
+   5 - CI gradient is not enabled for parallel execution
+   23,25,27 - MOPAC is not enabled for parallel execution
+   32,42,45,46,47 - only RHF-based CCSD/CCSD(T) is parallel
+   39 - RUNTYP=TDHFX is not enabled for parallel execution

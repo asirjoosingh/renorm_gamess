@@ -1,0 +1,4558 @@
+C 26 Apr 12 - LBR - add file cleanup for mpqc disk files
+C  7 Mar 12 - MWS - align DETWFN common
+C  2 Mar 12 - LBR - ADD PT2R12 BSIE CORRECTION
+C                     COMPUTE REAL SPIN-FREE 2PDM
+C                     GENERATE INPUTS FOR MPQC
+C
+!*MODULE EXCORR  *DECK R12_F_NAME
+      SUBROUTINE R12_F_NAME(FNAME,FILENM2)
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+      LOGICAL GOPARR,DSKWRK,MASWRK
+      CHARACTER*(*) FNAME,FILENM2
+      CHARACTER*256 FILENM
+      CHARACTER*3 FILNUM
+      CHARACTER*1 NULL
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+      COMMON /RUNOPT/ RUNTYP,EXETYP,NEVALS,NGLEVL,NHLEVL
+
+! GENERATE UNIQUE FILES NAMES FOR META DATA : GOOD FOR PES SCANS.
+!         write geometry counter with leading 0's into FILNUM
+!         DO NOT CHANGE THE CASE ON THE FILENAME EXTENSION.
+      WRITE(FILNUM,FMT='(I3.3)') NEVALS
+      FILENM=' '
+      IF (MASWRK) CALL GMS_GETENV(FNAME,FILENM)
+!
+      NULL = CHAR(0)
+      DO 101 KOL=1,256
+         IF(FILENM(KOL:KOL).EQ.' '  .OR.
+     *      FILENM(KOL:KOL).EQ.NULL) GO TO 102
+  101 CONTINUE
+      KOL=257
+  102 CONTINUE
+      KOL=KOL-1
+! append file number to filename
+      FILENM2=FILENM(1:KOL)//'.'//FILNUM
+!         
+      RETURN
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK GET_PT2R12_INFO
+c> @brief      this routine sets up mpqc interface
+c> 
+c> @author     luke roskop
+c>             -2012
+c> 
+c> @details    call mpqc and populate argv,argc
+c> 
+c> @param nfrzcr12 number of frozen core orbitals
+c> @param ninactr12 number of inactive orbitals
+c> @param nactr12 number or active orbitals
+c> @param nfrzvr12 number of frozen valence orbitals
+c> @param ncorr_r12 do r12 correlation correction
+c> @param dfbs used density fitting
+c> @param runr12 direct call from gamess to mpqc
+c> @param singls perform singles correction
+c> @param nthrds number of threads to spawn in mpqc
+c> @param f12exp f12 exponent in gemincal function
+c> @param set_r12_exp flag to indicate if f12exp is set in input
+c>
+      SUBROUTINE GET_PT2R12_INFO(NFRZCR12,NINACTR12,NACTR12,NFRZVR12,
+     $     NCORR_R12,DFBS,RUNR12,SINGLS,NTHRDS,F12EXP,SET_F12_EXP)
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+      LOGICAL GOPARR,DSKWRK,MASWRK,DSKSAV,DFBS,RUNR12,SINGLS,
+     $     SET_F12_EXP
+
+      PARAMETER (MXATM=2000, MXRT=100, MAXA=103, MAXL=7)
+
+      COMMON /BASISC/ GBASIS,AEX(MAXA,MAXL),ABASIS(MAXA,MAXL),
+     *                IAGAUS(MAXA,MAXL),IRDBAS
+      COMMON /IOFILE/ IR,IW,IP,IS,IJKT,IDAF,NAV,IODA(950)
+      COMMON /FMCOM / X(1)
+      COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
+     *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
+      COMMON /DETWFN/ WSTATE(MXRT),SPINS(MXRT),CRIT,PRTTOL,S,SZ,
+     *                GRPDET,STSYMPRINT,GLIST,DWPARM,
+     *                NFLGDM(MXRT),IWTS(MXRT),NCORSV,NCOR,NACT,NORB,
+     *                NA1,NB1,K,KST,IROOT,IPURES,MAXW1,NITER,MAXP,NCI,
+     *                IGPDET,KSTSYM,NFTGCI,IDWEIGH
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+      CHARACTER*120 BASISINFO
+      CHARACTER*256 FILENM2
+      CHARACTER*1 NULL
+      DATA C2H/8HC2H     /
+
+      DATA BASACD,BASACT,BASACQ/8HACCD    ,8HACCT    ,8HACCQ    /
+      DATA BASAC5,BASAC6/8HACC5    ,8HACC6    /
+
+      CHARACTER*256 BASIS_NAME
+
+!// CURRENTLY: THIS ROUNTINE IS CALLED FROM ORMAS.SRC (ORDET)
+!
+      DSKSAV=DSKWRK
+      DSKWRK=.FALSE.
+!
+!// MEMORY FOR ORBITALS AND SYMMETRY INFO
+!
+      L2 = NUM*NUM
+      CALL VALFM(LOADFM)
+      MO_MEM = LOADFM +1
+      ISYM_MEM = MO_MEM + L2 + 1
+      LAST = ISYM_MEM + NQMT +1
+      NEED = LAST - LOADFM 
+      CALL GETFM(NEED)
+!
+!// ORBITAL SYMMETRIES AND LCAO COEFFICIENTS
+      CALL DAREAD(IDAF,IODA,X(MO_MEM),L2,15,0)
+      CALL DAREAD(IDAF,IODA,X(ISYM_MEM),NQMT,262,1)
+!
+      IF(MASWRK)CALL R12_F_NAME('R12INP',FILENM2)
+      NULL = CHAR(0)
+      DO 101 KOL=1,256
+         IF(FILENM2(KOL:KOL).EQ.' '  .OR.
+     *      FILENM2(KOL:KOL).EQ.NULL) GO TO 102
+  101 CONTINUE
+      KOL=257
+  102 CONTINUE
+      KOL=KOL-1
+!
+      IF(MASWRK)THEN
+         OPEN(UNIT=99,FILE=FILENM2(1:KOL)//'.input.pt2r12.dat',
+     $        STATUS='UNKNOWN')
+!// WRITE COORDINATES TO FILE 'PT2INT'
+      DO I = 1,NAT
+         WRITE(99,'(F5.1,3E36.25)')ZAN(I),(C(J,I), J=1,3)
+      ENDDO
+      WRITE(99,'(F5.1,3F36.25)')-1.,-1.,-1.,-1.
+      WRITE(99,'(A8)')GRPDET    !POINT GROUP
+!// MUST APPEND THE FOLLOWING IRREP INFO FOR C2H POINT GROUP
+      if(GRPDET.EQ.C2H)WRITE(99,'(A11)')'Ag Bg Bu Au'
+      WRITE(99,'(I2)')-1        !DELIMITER
+
+!// APPEND BASIS SET FROM FILE PT2BAS TO FILE 'PT2INT'
+      CALL SEQOPN(98,'PT2BAS', 'UNKNOWN',.TRUE.,'FORMATTED')
+ 8080 CONTINUE 
+      READ(98,'(a120)',END=8090)BASISINFO
+      WRITE(99,'(a120)')BASISINFO
+      GOTO 8080
+ 8090 CONTINUE 
+
+!// APPEND NUMBER OF ORBITALS TO FILE 'PT2INT'
+      WRITE(99,'(I6)')NQMT   !TOTAL NUMBER OF VARIATIONAL MOS
+
+!// APPEND LCAO COEFFICIENTS TO FILE 'PT2INT'
+      DO I = 1,NQMT
+         DO J = 1,NUM
+            ISHIFT = (I-1)*NUM +J
+            WRITE(99,'(2I6,4X,E36.25)')J,I,X(MO_MEM +ISHIFT-1)
+         ENDDO
+      ENDDO
+      WRITE(99,'(2I6,4X,E36.25)')-1,-1,-1. !DELIMITER
+
+!// APPEND ORBITAL SYMMETRIES TO FILE 'PT2INT'
+      CALL ORB_SYM_WRITER(X(ISYM_MEM),NQMT)
+
+!// APPEND SOME MORE INFO TO 'PT2R12'
+      WRITE(99,'(I6)')NFRZCR12  ! NUMBER OF FROZEN CORE ORBITALS
+      WRITE(99,'(I6)')NINACTR12 ! NUMBER OF CORE ORBITALS THAT ARE NOT FROZEN
+      WRITE(99,'(I6)')NACTR12   ! NUMBER OF ACTIVE ORBITALS
+      WRITE(99,'(I6)')NCORR_R12 ! NUMBER OF ORBITALS TO BE CORRELATED
+      WRITE(99,'(I6)')NFRZVR12  ! NUMBER OF FROZEN VALENCE ORITALS
+      WRITE(99,'(I2)')-1        !DELIMITER
+!
+      REWIND(98)
+      CALL SEQCLO(98,'KEEP')
+      CLOSE(99,STATUS='KEEP')
+      ENDIF                     !IF(MASWRK)
+!
+
+!// RETURN MEMORY
+      CALL RETFM(NEED)
+
+!// job name and determine name length
+      IF(MASWRK)CALL R12_F_NAME('GMSJOBNAME',FILENM2)
+      NULL = CHAR(0)
+      DO 201 KOL=1,256
+         IF(FILENM2(KOL:KOL).EQ.' '  .OR.
+     *      FILENM2(KOL:KOL).EQ.NULL) GO TO 202
+  201 CONTINUE
+      KOL=257
+  202 CONTINUE
+      KOL=KOL-1
+
+c$$$         CALL SYSINP(MEMORY,MEMDDI)                    
+c$$$         write(6,*)MEMORY                              
+
+      if(MASWRK)then
+         if(RUNR12.or.SINGLS)then
+!// fortran hides arguement length...
+!// determined the name of the disk files needed by MPQC
+            call add_arg('-prefix')
+            call add_arg(FILENM2(1:KOL)//'.input')
+         
+!// determine the formal basis set name (needed by MPQC)
+!// (DO NOT CHANGE CASE IN BASIS SET ASSIGNMENT)
+!// for now it is prescribed to use only aug-cc-pVXZ basis sets    
+            basis_name = ' '
+            if(GBASIS.eq.BASACD)basis_name='aug-cc-pVDZ'
+            if(GBASIS.eq.BASACT)basis_name='aug-cc-pVTZ'
+            if(GBASIS.eq.BASACQ)basis_name='aug-cc-pVQZ'
+            if(GBASIS.eq.BASAC5)basis_name='aug-cc-pV5Z'
+            if(GBASIS.eq.BASAC6)basis_name='aug-cc-pV6Z'
+            call add_arg('-obs')
+            call add_arg(basis_name)                          
+            
+!// use density fitting
+            call add_arg('-dfbs')
+            if(DFBS)then
+               call add_arg(' ')
+            else
+               call add_arg('none')
+            endif
+            
+!// compute [2]_r12 with mpqc interface
+            call add_arg('-r12')
+            if(RUNR12)then
+               call add_arg('true')
+            else
+               call add_arg('false')
+            endif
+            
+!// compute [2]_s with MPQC interface
+            call add_arg('-singles')
+            if(SINGLS)then
+               call add_arg('true')
+            else
+               call add_arg('false')
+            endif
+         
+!// indicate the number of threads desired
+            write(basisinfo,'(I3)')nthrds
+            call add_arg('-threadgrp')
+            call add_arg('<PthreadThreadGrp>:(num_threads='//basisinfo//
+     $           ')')
+
+
+!// F12 exponent
+            if(set_f12_exp)then
+               write(basisinfo,'(F6.4)')f12exp
+               call add_arg('-f12exp')
+               call add_arg(basisinfo)
+            endif
+!// call MPQC interface
+            call pt2r12_main()
+
+     
+!// delete MPQC interface files
+            OPEN(UNIT=99,FILE=FILENM2(1:KOL)//'.input.pt2r12.dat',
+     $           STATUS='UNKNOWN')
+            CLOSE(99,STATUS='DELETE')
+
+            OPEN(UNIT=99,FILE=FILENM2(1:KOL)//'.input.pt2r12.rdm2.dat',
+     $           STATUS='UNKNOWN')
+            CLOSE(99,STATUS='DELETE')
+!
+         endif
+!     
+      endif
+!     
+      DSKWRK = DSKSAV
+!
+      RETURN
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK ORB_SYM_WRITER
+      SUBROUTINE ORB_SYM_WRITER(IOB,NQMT)
+      IMPLICIT NONE
+      INTEGER IOB(*),NQMT,I
+      WRITE(99,'(1000I2)') (IOB(I),I=1,NQMT)
+      RETURN
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK GET_EXCORR_INPUT
+c> @brief      this routine get r12 parameters
+c> 
+c> @author     luke roskop
+c>             -2012
+c> 
+c> @details    gather r12 parameters from input
+c> 
+c> @param to_output print flag
+c> @param r12corr indicates whether r12 inputs are asked for
+c> @param nfrzc_r12 number of frozen core orbitals
+c> @param ninact_r12 number of inactive orbitals
+c> @param nact_r12 number or active orbitals
+c> @param nfrzv_r12 number of frozen valence orbitals
+c> @param ncorr_r12 do r12 correlation correction
+c> @param dfbs used density fitting
+c> @param runr12 direct call from gamess to mpqc
+c> @param singls perform singles correction
+c> @param nthrds number of threads to spawn in mpqc
+c> @param f12exp f12 exponent in gemincal function
+c> @param set_r12_exp flag to indicate if f12exp is set in input
+c> @param puntol 2-pdm punch to disk tolerance
+C>
+      SUBROUTINE GET_EXCORR_INPUT(TO_OUTPUT,R12CORR,NFRZC_R12,
+     $     NINACT_R12,NACT_R12,NFRZV_R12,PUNTOL,NCORR_R12,
+     $     DFBS,RUNR12,SINGLS,NTHRDS,F12EXP,SET_F12_EXP)
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+      PARAMETER (MXRT=100)
+      COMMON /DETWFN/ WSTATE(MXRT),SPINS(MXRT),CRIT,PRTTOL,S,SZ,
+     *                GRPDET,STSYMPRINT,GLIST,DWPARM,
+     *                NFLGDM(MXRT),IWTS(MXRT),NCORSV,NCOR,NACT,NORB,
+     *                NA1,NB1,K,KST,IROOT,IPURES,MAXW1,NITER,MAXP,NCI,
+     *                IGPDET,KSTSYM,NFTGCI,IDWEIGH
+      COMMON /IOFILE/ IR,IW,IP,IS,IJKT,IDAF,NAV,IODA(950)
+      LOGICAL PT2R12,TO_OUTPUT,CCR12,R12CORR,RUNR12,SINGLS,DFBS,
+     $     SET_F12_EXP,TPDM_CHECK,SANCHK
+
+      PARAMETER (NNAM=14)
+      DIMENSION QNAM(NNAM),KQNAM(NNAM)
+      DATA QNAM/8HPT2R12  ,8HNFRZV   ,8HNFRZC   ,8HNINACT  ,8HNACT    ,
+     $          8HNCORR   ,8HPUNTOL  ,8HCCR12   ,8HDFBS    ,8HRUNR12  ,
+     $          8HSINGLS  ,8HNTHRDS  ,8HF12EXP  ,8HSANCHK  /
+
+      DATA KQNAM/0,1,1,1,1,
+     $           1,3,0,0,0,
+     $           0,1,3,0/
+
+      DATA EXCORR/8HEXCORR  /
+!
+      PT2R12 = .FALSE.
+      CCR12 = .FALSE.
+      R12CORR=.FALSE.
+      NFRZC = NCORSV
+      NINACT  = 0
+      NACT  = NACT
+      NFRZV = 0
+      NCORR = NACT
+      PUNTOL = 1.00D-11
+      DFBS = .FALSE.
+      RUNR12 = .FALSE.
+      SINGLS = .FALSE.
+      NTHRDS = 1
+      F12EXP = 0.0D+00
+      SET_F12_EXP = .FALSE.
+      SANCHK = .FALSE.
+!     
+      CALL NAMEIO(IR,JRET,EXCORR,NNAM,QNAM,KQNAM,
+     $     PT2R12,NFRZV,NFRZC,NINACT,NACT,
+     $     NCORR,PUNTOL,CCR12,DFBS,RUNR12,
+     $     SINGLS,NTHRDS,F12EXP,SANCHK,    
+     $     0,0,0,0,0,    0,0,0,0,0,
+     $     0,0,0,0,0,    0,0,0,0,0,    0,0,0,0,0,    0,0,0,0,0,
+     $     0,0,0,0,0,    0,0,0,0,0,    0,0,0,0,0,    0,0,0,0,0)
+      IF(PT2R12.AND.JRET.NE.0)THEN
+         WRITE(6,'("ERROR IN $EXCORR INPUT GROUP")')
+         CALL ABRT
+      ENDIF 
+!
+      IF(.NOT.PT2R12)RETURN
+!
+      NFRZC_R12 = NFRZC
+      NINACT_R12 = NINACT
+      NACT_R12 = NACT
+      NCORR_R12 =  NCORR
+      NFRZV_R12 = NFRZV
+      TPDM_CHECK = SANCHK
+      IF(TPDM_CHECK)WRITE(6,*)'SANITY CHECK NOT YET ENABLED'
+      IF(PT2R12)R12CORR=.TRUE.
+      IF(CCR12)R12CORR=.TRUE.
+      IF(F12EXP.GT.1.0D-6)SET_F12_EXP = .TRUE.
+      IF(PT2R12.AND.TO_OUTPUT)THEN
+         if(RUNR12)THEN
+            WRITE(6,1000)RUNR12,SINGLS
+
+            IF(SET_F12_EXP)THEN
+               WRITE(6,1010)F12EXP
+            ELSE
+               WRITE(6,1020)'RECOMMENDED VALUE'
+            ENDIF
+
+            WRITE(6,1030)DFBS,NTHRDS,NFRZC_R12,
+     $           NINACT_R12, NACT_R12,NFRZV_R12,NCORR_R12,PUNTOL
+         ELSE
+            WRITE(6,1050)RUNR12,SINGLS,NFRZC_R12,
+     $           NINACT_R12, NACT_R12,NFRZV_R12,NCORR_R12,PUNTOL
+         ENDIF
+      ELSEIF(CCR12.AND.TO_OUTPUT)THEN
+         WRITE(6,1100)NFRZC_R12,NINACT_R12,NACT_R12,NFRZV_R12,NCORR_R12,
+     $        PUNTOL
+      ENDIF  
+!     
+      RETURN
+!
+ 1000 FORMAT(/5X,60(1H-)/
+     $     15X,'CREATING INPUTS FOR MPQC PT2R12 CORRECTION',/
+     $     5X,60(1H-)/
+     $     /8X,16(1H-),X,'PT2R12 SPECIFICATION',X,16(1H-)/
+     $    12X, 'COMPUTE [2]_R12 WITH MPQC INTERFACE:',L8/
+     $    12X, 'COMPUTE [2]_S WITH MPQC INTERFACE:  ',L8)
+ 1010 FORMAT(12X,'F12 EXPONENT:                       ',F8.4)
+ 1020 FORMAT(12X,'F12 EXPONENT:                    ',A17)
+ 1030 FORMAT(12X,'USE DENSITY FITTING:                ',L8/
+     $      12X, 'NUMBER OF THREADS:                  ',2X,I6/    
+     $      12X, 'NUMBER OF FROZEN CORE ORBITALS:     ',2X,I6/
+     $      12X, 'NUMBER OF INACTIVE ORBITALS:        ',2X,I6/
+     $      12X, 'NUMBER OF ACTIVE ORBITALS:          ',2X,I6/
+     $      12X, 'NUMBER OF FROZEN VIRTUAL ORBITALS:  ',2X,I6/
+     $      12X, 'TOTAL ORBITALS TO BE CORRELATED:    ',2X,I6//
+     $      12X, 'TWO-RDM PUNCH TOLERANCE:            ',2X,D8.2/
+     $       8X,54(1H-))
+ 1050 FORMAT(/5X,60(1H-)/
+     $     15X,'CREATING INPUTS FOR MPQC PT2R12 CORRECTION',/
+     $     5X,60(1H-)/
+     $     /8X,16(1H-),X,'PT2R12 SPECIFICATION',X,16(1H-)/
+     $    12X, 'COMPUTE [2]_R12 WITH MPQC INTERFACE:',L8/
+     $    12X, 'COMPUTE [2]_S WITH MPQC INTERFACE:  ',L8/
+     $    12X, 'NUMBER OF FROZEN CORE ORBITALS:     ',2X,I6/
+     $    12X, 'NUMBER OF INACTIVE ORBITALS:        ',2X,I6/
+     $    12X, 'NUMBER OF ACTIVE ORBITALS:          ',2X,I6/
+     $    12X, 'NUMBER OF FROZEN VIRTUAL ORBITALS:  ',2X,I6/
+     $    12X, 'TOTAL ORBITALS TO BE CORRELATED:    ',2X,I6//
+     $    12X, 'TWO-RDM PUNCH TOLERANCE:            ',2X,D8.2/
+     $     8X,54(1H-))
+ 1100  FORMAT(/5X,60(1H-)/
+     $     12X,'CREATING INPUTS FOR MPQC CCSD(T)-R12 CORRECTION',/
+     $     5X,60(1H-)/
+     $     /8X,13(1H-),X,'CCSD(T)-R12 SPECIFICATION',X,14(1H-)/
+     $    12X, 'NUMBER OF FROZEN CORE ORBITALS:     ',X,I6/
+     $    12X, 'NUMBER OF INACTIVE ORBITALS:        ',X,I6/
+     $    12X, 'NUMBER OF ACTIVE ORBITALS:          ',X,I6/
+     $    12X, 'NUMBER OF FROZEN VIRTUAL ORBITALS:  ',X,I6/
+     $    12X, 'TOTAL ORBITALS TO BE CORRELATED:    ',X,I6//
+     $    12X, 'T1 AND T2 PUNCH TOLERANCE:          ',2X,D8.2/
+     $     8X,54(1H-))
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK GET_CIVECT_TABLES
+      SUBROUTINE GET_CIVECT_TABLES(IW,SOME,NACT,NCI,NA,NB,KST,MAXP,X,NX,
+     *     NSYM,LBOX1,LBOX2,LBOX3,LBOX4,CI,INDEX,IACON1,IBCON1,IBCON2,
+     $     LBNDET,NBST,LSYMB,LSPB,ITGB,IBST,NB1EX,IBST2,
+     $     JB1GR,JB1PE,JB1IN,JB1PO,JB1ST,JB1SY,JB1O1,JB1O2)
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+      LOGICAL SOME,GOPARR,DSKWRK,MASWRK,FDIRCT,QCORR
+      COMMON /CIFILS/ NFT11,NFT12,NFT13,NFT14,NFT15,NFT16,IDAF20,NEMEMX
+      COMMON /FCCWFN/ NSPACE,MSTA(51),MNUM(51),MINI(51),MAXI(51),
+     *                IAMI(51),IAMA(51),IBMI(51),IBMA(51),IDIM(51),
+     *                LBST(51),NREF0,FDIRCT,QCORR,C0SQ
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+      DIMENSION X(NX)
+      DIMENSION LBOX1(NSPACE),LBOX2(NSPACE),LBOX3(NSPACE),LBOX4(NSPACE)
+      DIMENSION CI(NCI,MAXP)
+      DIMENSION INDEX((NACT*(NACT+1))/2+1)
+      DIMENSION IACON1(NA),IBCON1(NA),IBCON2(NA)
+      DIMENSION LBNDET(NSPACE,ITGB)
+      DIMENSION NBST(ITGB+1)
+      DIMENSION LSYMB(IBST)
+      DIMENSION LSPB(IBST)
+      DIMENSION JB1GR(NB1EX),JB1PE(NB1EX),JB1IN(NB1EX),JB1ST(IBST2)
+      DIMENSION JB1PO(NB1EX),JB1SY(NB*(NACT-NB))
+      DIMENSION JB1O1(NB1EX),JB1O2(NB1EX)
+
+      DO 7 I=1,(NACT*(NACT+1))/2 + 1
+         INDEX(I) = (I*(I-1))/2
+    7 CONTINUE
+
+      DO 20 II=1,KST
+         DO 30 JJ=1,NCI
+            CI(JJ,II) = 0.0D+00
+   30    CONTINUE
+   20 CONTINUE
+
+
+!   SEE IF WE HAVE INITIAL GUESS VECTORS ON DISK.
+
+      NSTATE=0
+      NVECS =0
+
+      CALL SEQOPN(NFT12,'CIVECTR','UNKNOWN',.FALSE.,'UNFORMATTED')
+      CALL SEQREW(NFT12)
+      IF(MASWRK) READ(NFT12,ERR=2343,END=2343) NSTATE,NVECS
+      GO TO 2344
+
+ 2343 CONTINUE
+      WRITE(6,'("DAFCCI_2.SRC ERROR, NO USABLE CI VECTORS ON DISK")')
+      CALL ABRT
+      STOP
+
+!         LET OTHER NODES KNOW WHAT WAS WAS READ
+
+ 2344 CONTINUE
+      IF (GOPARR) CALL DDI_BCAST(2507,'I',NSTATE,1,MASTER)
+      IF (GOPARR) CALL DDI_BCAST(2508,'I',NVECS ,1,MASTER)
+
+!         IF INCONSISTENCY WITH THE DISK FILE, WE MUST TERMINATE
+
+      IF (NVECS.NE.NCI) THEN
+         IF (SOME) WRITE(IW,9005) NVECS,NCI
+         CALL ABRT
+      ENDIF
+
+!        READ CI EIGENVECTORS
+
+      IF (SOME) WRITE(IW,9007)
+      DO 100 ISTATE = 1,NSTATE
+         CALL SQREAD(NFT12,CI(1,ISTATE),NVECS)
+         IF(NVECS.EQ.0) THEN
+            IF (SOME) WRITE(IW,*)
+     *         'UNEXPECTED END OF FILE ON UNIT',NFT12
+            CALL ABRT
+            STOP
+         END IF
+  100 CONTINUE
+
+! DET UP B->B' INFORMATION IF ORMAS IS SET FDIRCT
+         IF (.NOT.FDIRCT) THEN
+         CALL FCCSUP2(IW,NA,NB,NACT,IACON1,IBCON1,IBCON2,
+     *           INDEX,NBST,LSPB,
+     *           LBOX1,LBOX2,LBOX3,LBOX4,
+     *           X,NX,LBNDET,LSYMB,NSYM,
+     *           ITGB,IBST,
+     *           NB1EX,JB1GR,JB1PE,JB1IN,JB1PO,JB1ST,JB1SY,
+     $           JB1O1,JB1O2)
+         ENDIF
+!
+      RETURN
+!
+ 9005 FORMAT(/1X,'ERROR, NUMBER OF VECTORS STORED=',I5,
+     *           ' NOT EQUAL TO NCI=',I5/
+     *        1X,'THIS MAY BE DUE TO A GARBAGE -CIVECTR- FILE',
+     *           ' LEFT OVER FROM AN EARLIER RUN.')
+ 9007 FORMAT(/1X,'ORMAS VECTORS READ FROM DISK'/)
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK FCCSRT4
+      SUBROUTINE FCCSRT4(JB1GR,JB1PE,JB1SY,N,IIND1O1,IIND1O2)
+      IMPLICIT INTEGER(A-Z)
+      DIMENSION JB1GR(N),JB1PE(N),JB1SY(N),IIND1O1(N),
+     $     IIND1O2(N)
+!
+!    SORTING GARBAGE.
+!
+      IF (N.LT.2) RETURN
+      L=N/2+1
+      IR=N
+!
+   10 CONTINUE
+         IF (L.GT.1) THEN
+            L=L-1
+            IRRA=JB1SY(L)
+            IRRB=JB1GR(L)
+            IRRC=JB1PE(L)
+            IRRE = IIND1O1(L)
+            IRRF = IIND1O2(L)
+         ELSE
+            IRRA=JB1SY(IR)
+            IRRB=JB1GR(IR)
+            IRRC=JB1PE(IR)
+            IRRE = IIND1O1(IR)
+            IRRF = IIND1O2(IR)
+            JB1SY(IR)=JB1SY(1)
+            JB1GR(IR)=JB1GR(1)
+            JB1PE(IR)=JB1PE(1)
+            IIND1O1(IR) = IIND1O1(1)
+            IIND1O2(IR) = IIND1O2(1)
+!
+            IR=IR-1
+            IF (IR.EQ.1) THEN
+               JB1SY(1)=IRRA
+               JB1GR(1)=IRRB
+               JB1PE(1)=IRRC
+               IIND1O1(1) = IRRE
+               IIND1O2(1) = IRRF
+!
+               GO TO 122
+            ENDIF
+         ENDIF
+         I=L
+         J=L+L
+   20    IF (J.LE.IR) THEN
+            IF (J.LT.IR) THEN
+                   IF (JB1SY(J).LT.JB1SY(J+1)) J=J+1
+            ENDIF
+            IF (IRRA.LT.JB1SY(J)) THEN
+               JB1SY(I)=JB1SY(J)
+               JB1GR(I)=JB1GR(J)
+               JB1PE(I)=JB1PE(J)
+               IIND1O1(I) = IIND1O1(J)
+               IIND1O2(I) = IIND1O2(J)
+               I=J
+               J=J+J
+            ELSE
+               J=IR+1
+            ENDIF
+         GO TO 20
+         ENDIF
+         JB1SY(I)=IRRA
+         JB1GR(I)=IRRB
+         JB1PE(I)=IRRC
+         IIND1O1(I) = IRRE
+         IIND1O2(I) = IRRF
+      GO TO 10
+!
+  122 CONTINUE
+!
+      RETURN
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK FCCSUP2
+      SUBROUTINE FCCSUP2(IW,NA,NB,NACT,IACON1,IBCON1,IBCON2,
+     *           INDEX,NBST,LSPB,
+     *           LBOX1,LBOX2,LBOX3,LBOX4,
+     *           X,NX,LBNDET,LSYMB,NSYM,ITGB,IBST,
+     *           NB1EX,JB1GR,JB1PE,JB1IN,JB1PO,JB1ST,JB1SY,
+     $           JB1O1,JB1O2)
+
+!     ------------------------------------------------------------------
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+!
+      LOGICAL FDIRCT,QCORR
+!
+      COMMON /FCCWFN/ NSPACE,MSTA(51),MNUM(51),MINI(51),MAXI(51),
+     *                IAMI(51),IAMA(51),IBMI(51),IBMA(51),IDIM(51),
+     *                LBST(51),NREF0,FDIRCT,QCORR,C0SQ
+!
+      DIMENSION IACON1(NA),IBCON1(NB),IBCON2(NB)
+      DIMENSION INDEX((NACT*(NACT+1))/2+1)
+      DIMENSION LBOX1(NSPACE),LBOX2(NSPACE),LBOX3(NSPACE)
+      DIMENSION LBOX4(NSPACE)
+      DIMENSION NBST(ITGB+1),LSPB(IBST)
+      DIMENSION X(NX)
+      DIMENSION LBNDET(NSPACE,ITGB),LSYMB(IBST)
+      DIMENSION JB1GR(NB1EX),JB1PE(NB1EX),JB1IN(NB1EX),JB1PO(NB1EX)
+      DIMENSION JB1ST(NSYM+1,IBST+1),JB1SY(NB*(NACT-NB))
+
+      DIMENSION JB1O1(NB1EX),JB1O2(NB1EX)
+
+!
+!  MAKE AND STORE ALL B -> B' DATA, WHERE B' > B.
+!
+      NB1CH = 0
+      INB = 0
+!
+!  LOOP THROUGH ALL BETA GROUPS
+!
+      CALL RESETCO(LBOX1,NSPACE,NB,IBMA,IBMI,LBOX3)
+!
+      DO 1000 IIB = 1,ITGB
+!
+         CALL RESETDE(LBOX1,NSPACE,NB,MSTA,IBCON1)
+!
+         DO 900 KKB=NBST(IIB)+1,NBST(IIB+1)
+            INB = INB + 1
+            DO II=1,NSPACE
+               LBOX2(II) = LBOX1(II)
+            ENDDO
+            JB1ST(1,INB) = NB1CH+1
+            KBST = NB1CH+1
+!
+!  LOOP OVER ALL SINGLE EXCITATIONS, CHECKING TO SEE IF IT IS VALID.
+!
+!  LOOP OVER SPACES TO EXCITE ELECTRON FROM.
+!
+            IEBS = NB+1
+            DO 890 ISPB1=NSPACE,1,-1
+               IOC1 = LBOX1(ISPB1)
+               IEBE = IEBS - 1
+               IEBS = IEBS - IOC1
+               IF (IOC1.EQ.0) GO TO 890
+               LBOX2(ISPB1) = LBOX2(ISPB1)-1
+!
+!  LOOP ELECTRONS IN SPACE ISPB1
+!  IEBS, IEBE ARE THE ELECTRONS IN SPACE ISPB1
+!
+               DO 885 IB1 = IEBE,IEBS,-1
+                  IO1 = IBCON1(IB1)
+                  IGBE = IEBE - LBOX1(ISPB1)
+!
+!  LOOP OVER POSSIBLE SPACES TO EXCITE INTO.
+!
+               DO 880 ISPB2=ISPB1,NSPACE
+!
+!  IGBS,IGBE ARE ELECTRONS SPECIFYING ISPB2 SPACE ELECTRON LIMITS.
+!
+                  IGBS = IGBE + 1
+                  IGBE = IGBE + LBOX1(ISPB2)
+!
+                  LBOX2(ISPB2) = LBOX2(ISPB2) + 1
+                  IF (LBOX2(ISPB1).LT.IBMI(ISPB1)) GO TO 870
+                  IF (LBOX2(ISPB2).GT.IBMA(ISPB2)) GO TO 870
+!
+!  GET GROUP NUMBER
+!
+          CALL POSITCO(LBOX4,NSPACE,NB,IBMA,IBMI,LBOX3,LBOX2,IGB)
+          NIAS = NBST(IGB)
+!
+!  MAKE GAP INFORMATION HERE.
+!
+                  IGBA = MAX(IB1+1,IGBS)
+                  IF (LBOX1(ISPB2).EQ.0) THEN
+                     ISTA = MSTA(ISPB2)
+                     IEND = MSTA(ISPB2+1)-1
+                  ELSEIF (ISPB2.EQ.ISPB1) THEN
+                     ISTA = IO1+1
+                     IEND = IBCON1(IGBA)-1
+                     IF (IB1.EQ.IEBE) IEND=MSTA(ISPB1+1)-1
+                  ELSE
+                     ISTA = MSTA(ISPB2)
+                     IEND = IBCON1(IGBA)-1
+                  ENDIF
+!
+!  LOOP OVER GAPS
+!
+                  DO 860 IGAP=IGBA,IGBE+1
+!
+                     DO 850 JJ=ISTA,IEND
+!
+                        NB1CH = NB1CH + 1
+                        JB1GR(NB1CH) = IGB
+                        JB1IN(NB1CH) = INDEX(JJ)+IO1
+                        JB1O1(NB1CH) = IO1
+                        JB1O2(NB1CH) = JJ
+!
+            CALL REDE00(IBCON1,IBCON2,NB,IB1,IGAP-1,JJ,IPER)
+            CALL IDPOST(IBCON2,NB,LBOX2,NSPACE,MSTA,IDIM,X,NX,LBST,
+     *                  LBNDET(1,IGB),IACON1,IPOSB)
+!
+                        JB1PE(NB1CH) = (-1)**IPER
+                        JB1PO(NB1CH) = LSPB(IPOSB+NIAS)
+                        JB1SY(NB1CH-KBST+1) = LSYMB(IPOSB+NIAS)
+!
+  850                CONTINUE
+!
+                  ISTA = IBCON1(IGAP)+1
+                  IEND = IBCON1(IGAP+1)-1
+                  IF (IGAP.EQ.IGBE) IEND=MSTA(ISPB2+1)-1
+  860             CONTINUE
+!
+  870             LBOX2(ISPB2) = LBOX2(ISPB2) - 1
+  880          CONTINUE
+!
+  885          CONTINUE
+!
+               LBOX2(ISPB1) = LBOX2(ISPB1) + 1
+  890       CONTINUE
+!
+!  ORDER THESE EXCITATIONS FOR BETA INB ACCORDING TO SYMMETRY.
+!
+            KNUM = NB1CH - KBST + 1
+            CALL FCCSRT22(JB1GR(KBST),JB1PE(KBST),JB1IN(KBST),
+     *           JB1PO(KBST),JB1SY,KNUM,
+     *           JB1O1(KBST),JB1O2(KBST))
+!
+!  MAKE THE SYMMETRY STARTING POINTS
+! ----
+            IST=1
+            DO 100 II=1,NSYM
+               DO 200 JJ=IST,KNUM
+                  IF (JB1SY(JJ).NE.II) GO TO 180
+  200          CONTINUE
+  180          JB1ST(II+1,INB) = JJ+KBST-1
+               IST = JJ
+  100       CONTINUE
+! ----
+!
+!  REORDER WITHIN EACH SYMMETRY BY POSITION.
+!
+            IJST=JB1ST(1,INB)
+            DO 300 II=1,NSYM
+               JSTA=JB1ST(II,INB)
+               JEND=JB1ST(II+1,INB)
+               JNUM=JEND-JSTA
+               IF (JNUM.LE.1) GO TO 300
+               CALL FCCSRT22(JB1GR(JSTA),JB1PE(JSTA),JB1IN(JSTA),
+     *              JB1SY(JSTA-IJST+1),JB1PO(JSTA),JNUM,
+     *              JB1O1(JSTA),JB1O2(JSTA))
+ 
+  300       CONTINUE
+!
+            CALL MOVEUP2(LBOX1,NSPACE,NB,MSTA,IBCON1)
+  900    CONTINUE
+!
+         CALL PUSHCO(LBOX1,NSPACE,NB,IBMA,IBMI,LBOX3,IEND)
+!
+ 1000 CONTINUE
+!
+      IF (NB1CH.NE.NB1EX) THEN
+         WRITE(IW,9000)
+         CALL ABRT
+         STOP
+      ENDIF
+      JB1ST(1,IBST+1) = NB1CH+1
+!
+      RETURN
+!
+ 9000 FORMAT(/1X,'ERROR IN CALCULATION OF SINGLE BETA EXCITES !!! ',
+     *           'PANIC !!!!!!'/1X,'CALL JOE AND TELL HIM OFF.')
+!
+      END
+!
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK FCCSRT22
+      SUBROUTINE FCCSRT22(JB1GR,JB1PE,JB1IN,JB1PO,JB1SY,N,
+     $     JB1O1,JB1O2)          
+      IMPLICIT INTEGER(A-Z)
+      DIMENSION JB1GR(N),JB1PE(N),JB1IN(N),JB1PO(N),JB1SY(N),
+     $     JB1O1(N),JB1O2(N) 
+!
+!    SORTING GARBAGE.
+!
+      IF (N.LT.2) RETURN
+      L=N/2+1
+      IR=N
+!
+   10 CONTINUE
+         IF (L.GT.1) THEN
+            L=L-1
+            IRRA=JB1SY(L)
+            IRRB=JB1GR(L)
+            IRRC=JB1PE(L)
+            IRRD=JB1IN(L)
+            IRRE=JB1PO(L)
+            IRRF = JB1O1(L)
+            IRRG = JB1O2(L)
+         ELSE
+            IRRA=JB1SY(IR)
+            IRRB=JB1GR(IR)
+            IRRC=JB1PE(IR)
+            IRRD=JB1IN(IR)
+            IRRE=JB1PO(IR)
+            IRRF = JB1O1(IR)
+            IRRG = JB1O2(IR)
+
+            JB1SY(IR)=JB1SY(1)
+            JB1GR(IR)=JB1GR(1)
+            JB1PE(IR)=JB1PE(1)
+            JB1IN(IR)=JB1IN(1)
+            JB1PO(IR)=JB1PO(1)
+            JB1O1(IR) = JB1O1(1)
+            JB1O2(IR) = JB1O2(1)
+!
+            IR=IR-1
+            IF (IR.EQ.1) THEN
+               JB1SY(1)=IRRA
+               JB1GR(1)=IRRB
+               JB1PE(1)=IRRC
+               JB1IN(1)=IRRD
+               JB1PO(1)=IRRE
+               JB1O1(1) = IRRF
+               JB1O2(1) = IRRG
+!
+               GO TO 122
+            ENDIF
+         ENDIF
+         I=L
+         J=L+L
+   20    IF (J.LE.IR) THEN
+            IF (J.LT.IR) THEN
+                   IF (JB1SY(J).LT.JB1SY(J+1)) J=J+1
+            ENDIF
+            IF (IRRA.LT.JB1SY(J)) THEN
+               JB1SY(I)=JB1SY(J)
+               JB1GR(I)=JB1GR(J)
+               JB1PE(I)=JB1PE(J)
+               JB1IN(I)=JB1IN(J)
+               JB1PO(I)=JB1PO(J)
+
+           JB1O1(I) = JB1O1(J)
+           JB1O2(I) = JB1O2(J)
+
+               I=J
+               J=J+J
+            ELSE
+               J=IR+1
+            ENDIF
+         GO TO 20
+         ENDIF
+         JB1SY(I)=IRRA
+         JB1GR(I)=IRRB
+         JB1PE(I)=IRRC
+         JB1IN(I)=IRRD
+         JB1PO(I)=IRRE
+
+         JB1O1(I) = IRRF                                                                
+         JB1O2(I) = IRRG
+
+      GO TO 10
+!
+  122 CONTINUE
+!
+      RETURN
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK MAKE_PT2R12_2RDM
+c> @brief      sets up memory and parameters for 2rmd computation
+c>             
+c> 
+c> @author     luke roskop
+c>             -2012
+c> 
+c> @details    sets up memory and parameters for 2rmd computation
+c> 
+c> @param rdm2tol printoff tolerance for 2rdm
+      SUBROUTINE MAKE_PT2R12_2RDM(RDM2TOL)
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+      LOGICAL SOME,GOPARR,DSKWRK,MASWRK,FDIRCT,QCORR,CEECHK
+      PARAMETER (MXRT=100)
+      COMMON /CEEIS3/ NEEDCI, CEECHK
+      COMMON /DETWFN/ WSTATE(MXRT),SPINS(MXRT),CRIT,PRTTOL,S,SZ,
+     *                GRPDET,STSYM,GLIST,DWPARM,
+     *                NFLGDM(MXRT),IWTS(MXRT),NCORSV,NCOR,NACT,NORB,
+     *                NA,NB,K,KST,IROOT,IPURES,MAXW1,NITER,MAXP,NCI,
+     *                IGPDET,KSTSYM,NFTGCI,IDWEIGH
+      COMMON /FCCWFN/ NSPACE,MSTA(51),MNUM(51),MINI(51),MAXI(51),
+     *                IAMI(51),IAMA(51),IBMI(51),IBMA(51),IDIM(51),
+     *                LBST(51),NREF0,FDIRCT,QCORR,C0SQ
+      COMMON /FMCOM / X(1)
+      COMMON /IOFILE/ IR,IW,IP,IS,IJKT,IDAF,NAV,IODA(950)
+      COMMON /MACHIN/ NWDVAR,MAXFM,MAXSM,LIMFM,LIMSM
+      COMMON /OUTPUT/ NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+      COMMON /RUNOPT/ RUNTYP,EXETYP,NEVALS,NGLEVL,NHLEVL
+C$$$      COMMON /INTFIL/ NINTMX,NHEX,NTUPL,PACK2E,INTTYP,IGRDTYP
+      DATA CHECK/8HCHECK   /
+      DATA CIDET /8HCIDET   /
+      DATA ORMAS /8HORMAS   /
+
+!        ----- READ INPUT DEFINING THE FULL CLASS CI DIMENSIONS -----
+
+      CALL FCINPUT(-5,CIDET,ORMAS)
+!
+!     ----- DRIVER FOR FULL CLASS CI COMPUTATION -----
+!
+      SOME = MASWRK  .AND.  NPRINT.NE.-5
+      IF(SOME) WRITE(IW,9000) RDM2TOL
+ 9000 FORMAT(//1X,'WRITING TWO PARTICLE DENSITY FILE FOR -PT2R12-',
+     *            ' PROGRAM'/
+     *         1X,'RDM2TOL=',1P,E15.5)
+!
+      NTOT = NACT + NCORSV
+      NTCO = NCORSV
+      NORB = NACT
+      NCOR = 0
+      NSYM = 2**IGPDET
+!
+!  MODIFY MSTA TO GET RID OF CORE.
+!
+      DO II=1,NSPACE+1
+         MSTA(II) = MSTA(II) - NCORSV
+      ENDDO
+!
+!        COMPUTE THE TOTAL NUMBER OF DETERMINANTS IN THIS FULL CLASS CI.
+!        DECIDE NECESSARY DOUBLE/INTEGER WORKING STORAGE -IDS- AND -IIS-
+!
+!     FIRST NEED TO STORE NSPACE SETS OF BINOMIAL COEFFICIENTS FOR EACH
+!     SUB-SPACE.  THERE IS REASON BEHIND THIS, TRUST ME.  JUST ASK ME.
+!     LBST(I) WILL STORE WHERE IN X BINOMIAL ARRAYS FOR SPACE I START.
+!     IDIM(I) WILL STORE THE MAXIMUM NUMBER OF ALPHA OR BETA ELECTRONS.
+!
+!
+      CALL VALFM(LOADFM)
+      LBST(1)  = LOADFM + 1
+      DO II=2,NSPACE
+         IDIM(II-1) = MAX(IAMA(II-1),IBMA(II-1))
+         LBST(II) = LBST(II-1)+((MNUM(II-1)+1)*(IDIM(II-1)+1))
+      ENDDO
+      IDIM(NSPACE) = MAX(IAMA(NSPACE),IBMA(NSPACE))
+      LAST = LBST(NSPACE)+((MNUM(NSPACE)+1)*(IDIM(NSPACE)+1))
+      NEED1 = LAST - LOADFM - 1
+      CALL GETFM(NEED1)
+!
+      DO II=1,NSPACE
+         CALL BINOM8(X(LBST(II)),MNUM(II),IDIM(II))
+      ENDDO
+!
+!     NOW TO MAKE TABLES FOR THE ORMAS PROBLEM.
+!     MAKE MEMORY AVAILABLE FOR TABLE INFO AND
+!     TABLES THEMSELVES.
+!
+      CALL VALFM(LOADFM)
+      LBOX1 = LOADFM + 1
+      LBOX2 = LBOX1 + NSPACE/NWDVAR + 1
+      LBOX3 = LBOX2 + NSPACE/NWDVAR + 1
+      LBOX4 = LBOX3 + NSPACE/NWDVAR + 1
+      LBOX5 = LBOX4 + NSPACE/NWDVAR + 1
+      LIBO = LBOX5 + NSPACE/NWDVAR + 1
+      LAST = LIBO + NTOT/NWDVAR + 1
+      NEED2 = LAST - LOADFM - 1
+      CALL GETFM(NEED2)
+!
+!    READ ORBITALS LABELS AND GET RID OF THE CORE PART.
+!
+      CALL DAREAD(IDAF,IODA,X(LIBO),NTOT,262,1)
+      CALL CORTRA(X(LIBO),NTOT,NTCO)
+!
+!    WORK OUT HOW MANY ALPHA AND BETA GROUPS THERE ARE.
+!
+      CALL TOTALCO(X(LBOX1),NSPACE,NA,IAMA,IAMI,X(LBOX2),ITGA)
+      CALL TOTALCO(X(LBOX1),NSPACE,NB,IBMA,IBMI,X(LBOX2),ITGB)
+!
+!    DETERMINE THE TOTAL NUMBER OF ALPHA AND BETA STRINGS.
+!
+      CALL RESETCO(X(LBOX1),NSPACE,NA,IAMA,IAMI,X(LBOX2))
+      IAST = 0
+      DO II=1,ITGA
+      CALL TOTDETG(X(LBOX1),NSPACE,LBST,X(LBST(1)),NEED1,
+     *    MNUM,IDIM,ITOT)
+      IAST = IAST + ITOT
+      CALL PUSHCO(X(LBOX1),NSPACE,NA,IAMA,IAMI,X(LBOX2),IEND)
+      ENDDO
+!
+      CALL RESETCO(X(LBOX1),NSPACE,NB,IBMA,IBMI,X(LBOX2))
+      IBST = 0
+      DO II=1,ITGB
+      CALL TOTDETG(X(LBOX1),NSPACE,LBST,X(LBST(1)),NEED1,
+     *    MNUM,IDIM,ITOT)
+      IBST = IBST + ITOT
+      CALL PUSHCO(X(LBOX1),NSPACE,NB,IBMA,IBMI,X(LBOX2),IEND)
+      ENDDO
+!
+!    MAKE STORAGE TO HOLD SYMMETRY INFORMATION OF STRINGS.
+!    THE LABELS BELOW APPEAR THE SAME IN ROUTINE MAKTABS
+!    AND THIS ROUTINE ALSO EXPLAINS WHAT THEY ARE USED FOR.
+!
+      CALL VALFM(LOADFM)
+      LWRK   = LOADFM + 1
+      LCOA   = LWRK   + 43/NWDVAR + 1
+      LCOB   = LCOA   + (NSYM*ITGA)/NWDVAR + 1
+      LGMUL  = LCOB   + (NSYM*ITGB)/NWDVAR + 1
+      LKTAB  = LGMUL  + (NSYM*NSYM)/NWDVAR + 1
+      LCON   = LKTAB  + NSYM/NWDVAR + 1
+      LCON1  = LCON   + NA/NWDVAR + 1
+      LCON2  = LCON1  + NA/NWDVAR + 1
+      LCON3  = LCON2  + NA/NWDVAR + 1
+      LANDET = LCON3  + NA/NWDVAR + 1
+      LBNDET = LANDET + (ITGA*NSPACE)/NWDVAR + 1
+      NAST   = LBNDET + (ITGB*NSPACE)/NWDVAR + 1
+      NBST   = NAST   + (ITGA+1)/NWDVAR + 1
+      LSYMA  = NBST   + (ITGB+1)/NWDVAR + 1
+      LSYMB  = LSYMA  + IAST/NWDVAR + 1
+      LGCOM  = LSYMB  + IBST/NWDVAR + 1
+      LSPA   = LGCOM  + (ITGA*ITGB)/NWDVAR + 1
+      LSPB   = LSPA   + IAST/NWDVAR + 1
+      LDISB  = LSPB   + IBST/NWDVAR + 1
+      LSAS   = LDISB  + (NSYM*ITGB*ITGA)/NWDVAR + 1
+      LSBS   = LSAS   + ((NSYM+1)*ITGA)/NWDVAR + 1
+      LSAC   = LSBS   + ((NSYM+1)*ITGB)/NWDVAR + 1
+      LSBC   = LSAC   + IAST/NWDVAR + 1
+      LAST   = LSBC   + IBST/NWDVAR + 1
+      NEED3 = LAST - LOADFM - 1
+
+      CALL GETFM(NEED3)
+!
+!    MAKE INTEGER TABLES FOR ORMAS. GET NUMBER OF DETS, ETC.
+!
+      IF (SOME) CALL TSECND(E0)
+!
+      CALL MAKTABS(IW,.FALSE.,X(LBOX1),X(LBOX2),X(LBOX3),NSPACE,
+     *             NA,NB,LBST,X(LBST(1)),NEED1,
+     *             IAMA,IAMI,IBMA,IBMI,MNUM,IDIM,MSTA,
+     *             X(LIBO),IGPDET,KSTSYM,NSYM,
+     *             NACT,X(LWRK),X(LKTAB),X(LGMUL),
+     *             X(LCON),X(LCOA),X(LCOB),X(LANDET),X(LBNDET),
+     *             X(NAST),X(NBST),X(LSYMA),X(LSYMB),X(LGCOM),
+     *             MINI,MAXI,X(LSPA),X(LSPB),X(LDISB),
+     *             X(LSAS),X(LSBS),X(LSAC),X(LSBC),
+     *             ITGA,ITGB,IAST,IBST,NCI,NA1EX,NB1EX,FDIRCT)
+!
+!   ORMAS DOUBLE PRECISION MEMORY
+!
+
+      CALL VALFM(LOADFM)
+!original      
+c$$$      KCOEFF = LOADFM +1
+c$$$      LAST   = KCOEFF + KST*NCI
+!replaced for GA
+!lukebr
+      m1 = nact + ncorsv
+      IBUFF_SIZE = 500000
+      KCOEFF = LOADFM +1
+      IBUFF   = KCOEFF + KST*NCI
+      IIBUFF  = IBUFF  + ibuff_size
+!      LAST   =  IIBUFF + ibuff_size
+      i1_buff = iibuff + ibuff_size
+      id1_buff = i1_buff + nact +1
+      idscal_vec = id1_buff + nact +1
+      irdm1 = idscal_vec + nact + 1
+      last = irdm1 + m1*m1 +1
+
+      M1 = NACT
+      M2 = M1*(M1 +1)/2
+      M3 = M2*(M2 +1)/2
+
+      M4 = M1*(M1 -1)/2
+      M5 = M4*(M4+1)/2
+
+!
+!   ORMAS INTEGER STORAGE IS LAST.
+!
+      IPOSA  = LAST
+      IPERA  = IPOSA  + (NA*(NACT-NA)*NSYM)/NWDVAR + 1
+      IIND1  = IPERA  + (NA*(NACT-NA)*NSYM)/NWDVAR + 1
+      IGROA  = IIND1  + (NA*(NACT-NA)*NSYM)/NWDVAR + 1
+      INDEX  = IGROA  + (NA*(NACT-NA)*NSYM)/NWDVAR + 1
+      IMMC   = INDEX  + ((NACT*(NACT+1))/2+1)/NWDVAR + 1
+      IHMCON = IMMC + NSYM
+!
+!  LEAVE SPACE FOR THE SINGLE EXCITED STORAGE.
+!  NOTE, IF FDIRCT = .TRUE. THEN NB1EX = ITGA.
+!
+      JB1GR = IHMCON + K
+      JB1PE = JB1GR + NB1EX/NWDVAR + 1
+      JB1IN = JB1PE + NB1EX/NWDVAR + 1
+      JB1O1 = JB1IN + NB1EX/NWDVAR + 1
+      JB1O2 = JB1O1 + NB1EX/NWDVAR + 1
+      IND1O1 = JB1O2 + NB1EX/NWDVAR +1
+      IND1O2 =  IND1O1 + (NA*(NACT-NA))*NSYM +1
+!original
+c$$$      IFDM2  = IND1O2  + (NA*(NACT-NA))*NSYM +1
+c$$$      JB1PO = IFDM2  + NACT**4 + 1
+!replace for GA
+      JB1PO = IND1O2  + (NA*(NACT-NA))*NSYM +1
+
+
+      JB1SY = JB1PO + NB1EX/NWDVAR + 1
+      JB1ST = JB1SY + (NB*(NACT-NB))/NWDVAR + 1
+
+!
+      IF (.NOT.FDIRCT) THEN
+         LAST   = JB1ST + ((IBST+1)*(NSYM+1))/NWDVAR + 1
+         IBST2 = (IBST+1)*(NSYM+1)
+      ELSE
+         LAST = JB1ST + 1
+         NB1EX = ITGA
+         IBST2 =  1
+      ENDIF
+!
+      NEED4  = LAST - LOADFM - 1
+      NEEDCI = NEED1 + NEED2 + NEED3 + NEED4
+!
+      CALL GETFM(NEED4)
+      IF(SOME) WRITE(6,1010)(NEED1+NEED2+NEED3+NEED4)
+ 1010 FORMAT(/10X,'MEMORY REQUIRED FOR SPIN-FREE DENSITY (WORDS)',
+     $     I12)
+!
+      IF(EXETYP.EQ.CHECK)THEN
+      if(MASWRK)write(6,1)
+      if(MASWRK)write(6,5)((m3+m5)/1000/1000)+1,
+     $     (float(m3+m5)*8/1024/1024)+1
+         CALL RETFM(NEED4)
+         CALL RETFM(NEED3)
+         CALL RETFM(NEED2)
+         CALL RETFM(NEED1)
+         RETURN
+      ENDIF
+!     
+!        ----- COMPUTE FULL CLASS CI WAVEFUNCTION -----
+!
+      CALL GET_CIVECT_TABLES(IW,SOME,NACT,NCI,NA,NB,KST,MAXP,
+     $     X(LBST(1)),NEED1,NSYM,X(LBOX1),X(LBOX2),X(LBOX3),X(LBOX4),
+     $     X(KCOEFF),X(INDEX),X(LCON),X(LCON1),X(LCON2),X(LBNDET),
+     $     X(NBST),X(LSYMB),X(LSPB),ITGB,IBST,NB1EX,IBST2,
+     $     X(JB1GR),X(JB1PE),X(JB1IN),X(JB1PO),X(JB1ST),X(JB1SY),
+     $     X(JB1O1),X(JB1O2))
+!
+!  DETERMINE IF STATE AVERAGED 1E- AND 2E- DENSITY MATRICES REQUESTED
+!
+      IF (.NOT.FDIRCT) THEN
+         IDIM1 = NSYM+1
+         IDIM2 = IBST+1
+      ELSE
+         IDIM1 = 1
+         IDIM2 = 1
+      ENDIF
+C
+C$$$!////////////testing//////////                                                          
+C$$$!////////////testing//////////                                                          
+C$$$!////////////testing//////////                                                          
+C$$$!for testing purposes below....                                                         
+C$$$!      This is for a sanity check of the 2-PDM and 1-PDM:recompute energy
+C$$$!           To get this to work:
+C$$$!
+C$$$!      1) just include core part and do not allow excitations from that space
+C$$$!      2) make sure to uncomment intfil common block to test code
+C$$$!      3) comment 'IF(GOPARR)CALL DDI_DESTROY(D_OOOO)' in ormas1.src before GET_PT2R12_INFO is called
+C$$$!           -other parallel integrals will not work here
+C$$$!      4) uncomment the apporate parts of the code here and in the next subroutine
+
+C$$$      M1 = NACT                                                                         
+C$$$      M2 = (M1*M1+M1)/2                                                                 
+C$$$      M4 = (M2*M2+M2)/2                                                                 
+C$$$      L0 = NQMT                                                                         
+C$$$      L1 = NUM                                                                          
+C$$$      L2 = (L1*L1+L1)/2                                                                 
+C$$$      L3 = L1*L1                                                                        
+C$$$!   INTEGRAL STORAGE REQUIREMENTS FIRST.                                                
+C$$$      CALL VALFM(LOADFM)                                                                
+C$$$      LSINT1   = LOADFM   + 1                                                           
+C$$$      LSINT2   = LSINT1   + M2                                                          
+C$$$      LIA      = LSINT2   + M4                                                          
+C$$$      LXX      = LIA      + M2/NWDVAR + 1                                               
+C$$$      LIXX     = LXX      + NINTMX                                                      
+C$$$      last = lixx + NINTMX                                                              
+C$$$      NEED10  = LAST - LOADFM - 1                                                       
+C$$$      CALL GETFM(NEED10)                                                                
+C$$$      CALL SEQREW(IJKT)                                                                 
+C$$$      CALL SQREAD(IJKT,X(LSINT1),m2)
+C$$$      if(.not.goparr)then                                                               
+C$$$         call m1eghr(ijkt,x(lsint2),x(lxx),x(lixx),x(lia),nintmx,                       
+C$$$     *        m1,0)                                                                     
+C$$$      else                                                                              
+C$$$         call rdoooo(x(lsint2),0,m1,m4,x(lxx))                                          
+C$$$      endif                                                                             
+C$$$!////////////testing//////////                                                          
+C$$$!////////////testing//////////                                                          
+C$$$!////////////testing//////////                                                          
+
+      NPRI6 = NPRINT
+      CALL SPINFREE_2RDM(IW,NPRI6,IWTS,WSTATE,SPINS,IPURES,S,K,
+     *     NACT,NCI,NA,NB,
+     *     X(KCOEFF),
+     *     X(LBST(1)),NEED1,
+     *     X(INDEX),NSYM,X(LIBO),
+     *     X(LBOX1),X(LBOX2),X(LBOX3),X(LBOX4),X(LBOX5),
+     *     X(LGMUL),X(LKTAB),
+     *     X(LCON),X(LCON1),X(LCON2),X(LCON3),
+     *     X(LANDET),X(LBNDET),X(NAST),X(NBST),
+     *     X(LSYMA),X(LSYMB),X(LGCOM),X(LSPA),X(LSPB),
+     *     X(LDISB),X(LSAS),X(LSBS),X(LSAC),X(LSBC),
+     *     ITGA,ITGB,IAST,IBST,
+     *     X(IPOSA),X(IPERA),X(IIND1),X(IGROA),X(IMMC),
+     *     NB1EX,
+     *     X(JB1GR),X(JB1PE),X(JB1PO),X(JB1ST),
+     *     IDIM1,IDIM2,
+     *     X(JB1O1),X(JB1O2),X(IND1O1),X(IND1O2),RDM2TOL,x(ibuff),
+     *     x(iibuff),ibuff_size,x(i1_buff),x(id1_buff),x(idscal_vec),
+     *     x(irdm1),ncorsv)
+!     *     x(irdm1),ncorsv,x(lsint2),x(lsint1))
+
+C$$$!////////////testing//////////
+C$$$!////////////testing//////////
+C$$$!////////////testing//////////
+C$$$      call retfm(need10)      
+C$$$!////////////testing//////////
+C$$$!////////////testing//////////
+C$$$!////////////testing//////////
+
+      CALL RETFM(NEED4)
+      CALL RETFM(NEED3)
+      CALL RETFM(NEED2)
+      CALL RETFM(NEED1)
+
+! RESET MSTA
+
+      DO II=1,NSPACE+1
+         MSTA(II) = MSTA(II) + NCORSV
+      ENDDO
+
+      RETURN
+    1 FORMAT(/1X,39('-')
+     *     ,/,1X,'DISTRIBUTED TWO-PARTICLE DENSITY MATRIX'
+     *     ,/,1X,39('-'))
+    5 FORMAT(1X,'THE DISTRIBUTED MEMORY REQUIRED FOR THIS STEP IS',
+     *           ' MEMDDI=',I10,' MWORDS',/57x,F10.1,' MBYTES'/)
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+!*MODULE EXCORR  *DECK SPINFREE_2RDM
+c> @brief      this routine generates the spin-free two-particle density
+c>              matrix.
+c> 
+c> @author     luke roskop
+c>             -2012
+c> 
+c> @details    this routine generates the 2-rdm
+c> 
+c> @param     rdm1 first order denisty matrix
+c> @param     ncore number of core orbitals
+      SUBROUTINE SPINFREE_2RDM(IW,NPRINT,IWTS,WSTATE,SPINS,IPURES,S,K,
+     *     NACT,NCI,NA,NB,AB,
+     *     Y,NX,INDEX,NSYM,IOB,
+     *     LBOX1,LBOX2,LBOX3,LBOX4,LBOX5,
+     *     LGMUL,KTAB,IACON1,IACON2,IBCON1,IBCON2,
+     *     LANDET,LBNDET,NAST,NBST,LSYMA,LSYMB,LGCOM,
+     *     LSPA,LSPB,LDISB,LSAS,LSBS,LSAC,LSBC,
+     *     ITGA,ITGB,IAST,IBST,
+     *     IPOSA,IPERA,IIND1,IGROA,IMMC,
+     *     NB1EX,JB1GR,JB1PE,JB1PO,JB1ST,IDIM1,IDIM2,
+     *     JB1O1,JB1O2,IIND1O1,IIND1O2,RDM2TOL,buff,ibuff,buffer_size,
+     *     i1_buff,d1_buff,dscal_vec,rdm1,ncore)
+!     *     i1_buff,d1_buff,dscal_vec,rdm1,ncore,si2,si1)
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+!
+      LOGICAL SOME,GOPARR,DSKWRK,MASWRK,FDIRCT,QCORR,DSKSAV
+!
+      PARAMETER (MXRT=100, MXATM=2000)
+      PARAMETER (ZERO=0.0D+00)
+!
+      COMMON /CIFILS/ NFT11,NFT12,NFT13,NFT14,NFT15,NFT16,IDAF20,NEMEMX
+      COMMON /ENRGYS/ ENUCR,EELCT,ETOT,STOT,SZZ,ECORE,ESCF,EERD,E1,E2,
+     *                VEN,VEE,EPOT,EKIN,ESTATE(MXRT),STATN,EDFT(2),EDISP
+      COMMON /FCCWFN/ NSPACE,MSTA(51),MNUM(51),MINI(51),MAXI(51),
+     *                IAMI(51),IAMA(51),IBMI(51),IBMA(51),IDIM(51),
+     *                LBST(51),NREF0,FDIRCT,QCORR,C0SQ
+      COMMON /FUNCT / E,EGRAD(3,MXATM)
+      COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
+!
+      DIMENSION IWTS(MXRT),WSTATE(MXRT),SPINS(MXRT)
+      DIMENSION AB(NCI,K),Y(NX)
+      DIMENSION INDEX((NACT*(NACT+1))/2+1),IOB(NACT)
+      DIMENSION LBOX1(NSPACE),LBOX2(NSPACE),LBOX3(NSPACE)
+      DIMENSION LBOX4(NSPACE),LBOX5(NSPACE)
+      DIMENSION LGMUL(NSYM,NSYM),KTAB(NSYM)
+      DIMENSION IACON1(NA),IACON2(NA),IBCON1(NA),IBCON2(NA)
+      DIMENSION LANDET(NSPACE,ITGA),LBNDET(NSPACE,ITGB)
+      DIMENSION NAST(ITGA+1),NBST(ITGB+1)
+      DIMENSION LSYMA(IAST),LSYMB(IBST),LGCOM(ITGB,ITGA)
+      DIMENSION LSPA(IAST),LSPB(IBST),LDISB(NSYM,ITGB,ITGA)
+      DIMENSION LSAS(NSYM+1,ITGA),LSBS(NSYM+1,ITGB)
+      DIMENSION LSAC(IAST),LSBC(IBST)
+      DIMENSION IPOSA(NA*(NACT-NA),NSYM)
+      DIMENSION IPERA(NA*(NACT-NA),NSYM)
+      DIMENSION IIND1(NA*(NACT-NA),NSYM)
+      DIMENSION IGROA(NA*(NACT-NA),NSYM)
+      DIMENSION IMMC(NSYM)
+      DIMENSION JB1GR(NB1EX),JB1PE(NB1EX),JB1PO(NB1EX)
+      DIMENSION JB1ST(IDIM1,IDIM2)
+      dimension rdm1(nact+ncore,nact+ncore)
+!      DOUBLE PRECISION FDM2(NACT,NACT,NACT,NACT)
+
+      INTEGER JB1O1(NB1EX),JB1O2(NB1EX)
+      INTEGER IIND1O1(NA*(NACT-NA),NSYM),IIND1O2(NA*(NACT-NA),NSYM)
+      CHARACTER*256 FILENM2
+      CHARACTER*1 NULL
+
+!for distrbuted 2pdm
+      integer D_2PDM !handle
+      integer buffer_size
+      double precision buff(buffer_size) !need to adjust later!!!!!
+      integer inc_buff,ibuff(buffer_size),ibuff_pad !need to adjust later!!!!!
+!      double precision one
+      integer ilo(1),ihi(2),get_scatter_pos_sym
+      integer i1_buff(nact)
+      double precision d1_buff(nact),screen_tol,dscal_vec(nact)
+      integer offset,i_dtype
+
+!debug (temporary)
+C$$$      double precision si2(*),si1(*),one_energy
+
+      inc_buff = 0 !// initialize buffer counter
+      ibuff_pad = 4*nact+10 !//padding for buffer
+      screen_tol = 1.0d-20
+
+! (i,j,k,l)  :   (pair i->l) (pair j->k)
+      M1 = NACT        
+      M2 = M1*(M1 +1)/2
+      M3 = M2*(M2 +1)/2 !regular order i.ge.l and j.ge.k and i.ge.j 
+      OFFSET = M3
+
+      M4 = M1*(M1 -1)/2
+      M5 = M4*(M4 +1)/2 !oppsite order i.gt.l and j.lt.k and i.gt.k
+
+    1 FORMAT(/15X,39('-')
+     *     ,/,15X,'DISTRIBUTED TWO-PARTICLE DENSITY MATRIX'
+     *     ,/,15X,39('-'))
+    5 FORMAT(2X,'THE DISTRIBUTED MEMORY REQUIRED FOR THIS STEP IS',
+     *           ' MEMDDI=',I10,' MWORDS',/58x,F10.1,' MBYTES')
+
+
+      if(MASWRK)write(6,1)
+      if(MASWRK)write(6,5)((offset+m5)/1000/1000)+1,
+     $     (float(offset+m5)*8/1024/1024)+1
+
+      CALL DDI_CREATE(1,offset+m5,d_2pdm)
+      if(MASWRK)write(6,*)
+
+      DO I = 1,NACT
+         DSCAL_VEC(I) = 1.0D+00
+      ENDDO
+
+c$$$! INITIALIZE FDM2...
+c$$$      DO I = 1,NACT
+c$$$         DO II = 1,NACT
+c$$$            DO III = 1,NACT
+c$$$               DO IV = 1,NACT
+c$$$                  FDM2(I,II,III,IV) = 0.0D+00
+c$$$               ENDDO
+c$$$            ENDDO
+c$$$         ENDDO
+c$$$      ENDDO
+
+!
+!  ----  STATE-AVERAGED 2E- DENSITY MATRIX  ----
+!
+      SOME = MASWRK  .AND.  NPRINT.NE.-5
+!
+      MXSTAT=0
+      MXNZW=0
+!
+      DO 100 I=MXRT,1,-1
+         IF(WSTATE(I).GT.ZERO) THEN
+            IF(MXSTAT.EQ.0) MXSTAT=I
+            MXNZW=MXNZW+1
+         END IF
+  100 CONTINUE
+!
+      IF(MXSTAT.EQ.0) THEN
+         IF(SOME) THEN
+          WRITE(IW,*) 'OOPS, IN -MASDM2-, SOMETHING HAPPENED TO WSTATE'
+         END IF
+         CALL ABRT
+      END IF
+!
+!
+!        SET STATE AVERAGED ENERGY, PRINT ROOT INFORMATION
+!
+      E = ZERO
+      NXTR=0
+      DO 310 IST=1,K
+         IF(IPURES.EQ.1  .AND.  ABS(SPINS(IST)-S).GT.0.03D+00) GO TO 310
+         NXTR=NXTR+1
+         IF(WSTATE(NXTR).GT.ZERO) THEN
+            E = E + WSTATE(NXTR) * ESTATE(IST)
+            IF(SOME) WRITE(IW,9340) IST,ESTATE(IST),
+     *                              WSTATE(NXTR),SPINS(IST)
+         END IF
+         IF(NXTR.GT.MXSTAT) GO TO 320
+  310 CONTINUE
+!
+!        CROAK THE JOB IF WE DIDN'T CALCULATE ENOUGH ROOTS WITH THE
+!        DESIRED SPIN MULTIPLICITY DURING THE CI DIAGONALIZATION.
+!        IF THIS HAPPENS ON THE 1ST MCSCF ITER, WE'VE ALREADY GOT
+!        THE CI EXPANSIONS PRINTED OUT, AND SHOULD NOT REPEAT IT.
+!
+      IF(NXTR.LT.MXSTAT) THEN
+         IF(MASWRK) WRITE(IW,9350) NXTR,S,MXSTAT
+         IF(MASWRK  .AND.  .NOT.SOME) CALL ORMPRT(IW,NFT12,MASWRK)
+         IF(GOPARR) CALL DDI_SYNC(9205)
+         CALL ABRT
+      END IF
+!
+  320 CONTINUE
+!
+!  COPY CI COEFFICIENTS FOR ALL STATES WITH NON-ZERO WEIGHTS INTO AB
+!
+      NXTW=1
+      NXTR=0
+      DO 620 IST=1,K
+         IF (IPURES.EQ.1) THEN
+            IF (ABS(SPINS(IST)-S).GT.0.03D+00) GO TO 620
+            NXTR=NXTR+1
+         ELSE
+            NXTR=IST
+         ENDIF
+!
+         IF (NXTR.EQ.IWTS(NXTW)) THEN
+!$$$            CALL CICOPY(CI(1,IST),AB(1,NXTW),NCI)
+            CALL CICOPY(AB(1,IST),AB(1,NXTW),NCI)
+            NXTW = NXTW + 1
+         ENDIF
+  620 CONTINUE
+      NXTW = NXTW - 1
+!
+!  ---------  NOW TO DETERMINE STATE AVERAGED DENSITY MATRICES ---------
+!
+!  --- BIG LOOP OVER ALL ALPHA STRINGS. ---
+!
+      IF (GOPARR) THEN
+         CALL DDI_DLBRESET()
+         CALL DDI_DLBNEXT(MY_TASK)
+      ENDIF
+!
+      CALL RESETCO(LBOX1,NSPACE,NA,IAMA,IAMI,LBOX5)
+
+      DO 5000 IGA=1,ITGA
+!
+         CALL RESETDE(LBOX1,NSPACE,NA,MSTA,IACON1)
+!
+!  KKA GIVES THE ACTUAL POSITION OF THE ALPHA STRING IACON1 IN
+!  THE FULL ALPHA STRING LIST.
+!
+         DO 4900 KKA=NAST(IGA)+1,NAST(IGA+1)
+            IF (GOPARR.AND.KKA-1.NE.MY_TASK) GOTO 4899
+!            if(mod(kka,nproc).ne.me)goto 4899
+            JPZA1 = LSPA(KKA)
+            JASYM = LSYMA(KKA)
+            KSYM=KTAB(JASYM)
+            DO II=1,NSYM
+               IMMC(II)=0
+            ENDDO
+!
+            DO II=1,NSPACE
+               LBOX2(II) = LBOX1(II)
+            ENDDO
+!
+!  LOOP OVER SPACES TO EXCITE ELECTRON FROM.
+!
+            IEAS = NA+1
+            DO 4890 ISPA1=NSPACE,1,-1
+               IOC1 = LBOX1(ISPA1)
+               IEAE = IEAS - 1
+               IEAS = IEAS - IOC1
+               IF (IOC1.EQ.0) GO TO 4890
+               LBOX2(ISPA1) = LBOX2(ISPA1)-1
+!
+!  LOOP ELECTRONS IN SPACE ISPA1.
+!  IEAS, IEAE ARE THE ELECTRONS IN SPACE ISPA1.
+!
+               DO 4885 IA1=IEAE,IEAS,-1
+                  IO1 = IACON1(IA1)
+                  IGAE = IEAE - LBOX1(ISPA1)
+                  IS1 = IOB(IO1)
+!
+!  LOOP OVER POSSIBLE SPACES TO EXCITE INTO.
+!
+               DO 4880 ISPA2=ISPA1,NSPACE
+!
+!  IGAS, IGAE ARE ELECTRONS SPECIFYING ISPA2 SPACE ELECTRON LIMITS.
+!
+                  IGAS = IGAE + 1
+                  IGAE = IGAE + LBOX1(ISPA2)
+!
+                  LBOX2(ISPA2) = LBOX2(ISPA2) + 1
+                  IF (LBOX2(ISPA1).LT.IAMI(ISPA1)) GO TO 4870
+!
+!  MAKE GAP INFORMATION HERE.
+!
+                  IGAA = MAX(IA1+1,IGAS)
+                  IF (LBOX1(ISPA2).EQ.0) THEN
+                     ISTA = MSTA(ISPA2)
+                     IEND = MSTA(ISPA2+1)-1
+                  ELSEIF (ISPA2.EQ.ISPA1) THEN
+                     ISTA = IO1+1
+                     IEND = IACON1(IGAA)-1
+                     IF (IA1.EQ.IEAE) IEND=MSTA(ISPA1+1)-1
+                  ELSE
+                     ISTA = MSTA(ISPA2)
+                     IEND = IACON1(IGAA)-1
+                  ENDIF
+!
+!  LOOP OVER GAPS
+!
+                  DO 4860 IGAP=IGAA,IGAE+1
+!
+                     DO 4850 JJ=ISTA,IEND
+                        IS2 = IOB(JJ)
+                        IP1 = LGMUL(IS1,IS2)
+!
+                     IND = INDEX(JJ) + IO1
+!
+              CALL REDE00(IACON1,IACON2,NA,IA1,IGAP-1,JJ,JPERA)
+              IF (LBOX2(ISPA2).GT.IAMA(ISPA2)) GO TO 4800
+!
+!  GET GROUP NUMBER
+!
+           CALL POSITCO(LBOX5,NSPACE,NA,IAMA,IAMI,LBOX4,LBOX2,IGA2)
+           NIAS = NAST(IGA2)
+!
+              CALL IDPOST(IACON2,NA,LBOX2,NSPACE,MSTA,IDIM,Y,NX,LBST,
+     *                  LANDET(1,IGA2),IBCON1,JPOSA)
+              KAPOS = JPOSA + NIAS
+              JPZA2 = LSPA(KAPOS)
+              KASYM = LSYMA(KAPOS)
+              KPER1 = ((-1)**JPERA)*2
+              IMMC(KASYM) = IMMC(KASYM) + 1
+              JSPO = IMMC(KASYM)
+              IPOSA(JSPO,KASYM) = JPZA2
+              IPERA(JSPO,KASYM) = KPER1
+              IIND1(JSPO,KASYM) = IND
+              IGROA(JSPO,KASYM) = IGA2
+!
+              IIND1O1(JSPO,KASYM) = IO1
+              IIND1O2(JSPO,KASYM) = JJ
+!
+!   IF DEOCCUPIED AND NEWLY OCCUPIED ORBITALS ARE OF DIFFERENT SYMMETRY,
+!   SKIP TO DOUBLES.
+!
+              IF (IS1.NE.IS2) GO TO 4800
+!
+!   DETERMINE THE ALPHA STRING CONTRIBUTION TO THE MATRIX ELEMENT.
+!     
+              DO 4712 IK=1,NA
+                 IF (IK.EQ.IA1) GO TO 4712
+                 ION = IACON1(IK)
+!
+!  LOOP OVER APPROPRIATE BETA DETS AND UPDATE THE 1E DM2
+!
+
+c$$$         ibuff(inc_buff+1)= get_scatter_pos(JJ,ION,ION,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+1)= 0.0d+00
+c$$$         ibuff(inc_buff+2)= get_scatter_pos(ION,JJ,IO1,ION,n1,n2,n3)
+c$$$         buff(inc_buff+2)= 0.0d+00
+c$$$         ibuff(inc_buff+3)= get_scatter_pos(JJ,ION,IO1,ION,n1,n2,n3)
+c$$$         buff(inc_buff+3)= 0.0d+00
+c$$$         ibuff(inc_buff+4)= get_scatter_pos(ION,JJ,ION,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+4)= 0.0d+00
+c$$$         ibuff(inc_buff+5)= get_scatter_pos(IO1,ION,ION,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+5)= 0.0d+00
+c$$$         ibuff(inc_buff+6)= get_scatter_pos(ION,IO1,JJ,ION,n1,n2,n3)
+c$$$         buff(inc_buff+6)= 0.0d+00
+c$$$         ibuff(inc_buff+7)= get_scatter_pos(IO1,ION,JJ,ION,n1,n2,n3)
+c$$$         buff(inc_buff+7)= 0.0d+00
+c$$$         ibuff(inc_buff+8)= get_scatter_pos(ION,IO1,ION,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+8)= 0.0d+00
+
+         ibuff(inc_buff +1) = 
+     $        get_scatter_pos_sym(JJ,ION,ION,IO1,index,offset)
+         buff(inc_buff +1) = 0.0d+00
+
+         ibuff(inc_buff +2) = 
+     $        get_scatter_pos_sym(JJ,ION,IO1,ION,index,offset)
+         buff(inc_buff +2) = 0.0d+00
+
+              DO 1705 IGB=1,ITGB
+              IF (LGCOM(IGB,IGA).NE.1.OR.LGCOM(IGB,IGA2).NE.1) GOTO 1705
+              JCI1 = JPZA1 + LDISB(KSYM,IGB,IGA)
+              JCI2 = JPZA2 + LDISB(KSYM,IGB,IGA2)
+!
+              DO 1685 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                 JCI1 = JCI1 + 1
+                 JCI2 = JCI2 + 1
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC+ WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI2,KKI)
+                 ENDDO
+                 F_FC = F_FC*KPER1
+!A A2 -> A2 A'  WHERE: A'.GT.A    A2.NE.A
+!                 FDM2(JJ,ION,ION,IO1) =FDM2(JJ,ION,ION,IO1) +F_FC/2
+c$$$        call buff_load(JJ,ION,ION,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+
+!                 FDM2(ION,JJ,IO1,ION) =FDM2(ION,JJ,IO1,ION) +F_FC/2
+c$$$        call buff_load(ION,JJ,IO1,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +2) = buff(inc_buff +2) + f_fc/2
+
+!                 FDM2(JJ,ION,IO1,ION) =FDM2(JJ,ION,IO1,ION) -F_FC/2
+c$$$        call buff_load(JJ,ION,IO1,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +3) = buff(inc_buff +3) - f_fc/2
+
+!                 FDM2(ION,JJ,ION,IO1) =FDM2(ION,JJ,ION,IO1) -F_FC/2
+c$$$        call buff_load(ION,JJ,ION,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +4) = buff(inc_buff +4) - f_fc/2
+
+
+
+!------------ (DE)EXITE BELOW
+!                 FDM2(IO1,ION,ION,JJ) =FDM2(IO1,ION,ION,JJ) +F_FC/2
+c$$$        call buff_load(IO1,ION,ION,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +5) = buff(inc_buff +5) + f_fc/2
+
+!                 FDM2(ION,IO1,JJ,ION) =FDM2(ION,IO1,JJ,ION) +F_FC/2
+c$$$        call buff_load(ION,IO1,JJ,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +6) = buff(inc_buff +6) + f_fc/2
+
+!                 FDM2(IO1,ION,JJ,ION) =FDM2(IO1,ION,JJ,ION) -F_FC/2
+c$$$        call buff_load(IO1,ION,JJ,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +7) = buff(inc_buff +7) - f_fc/2
+
+!                 FDM2(ION,IO1,ION,JJ) =FDM2(ION,IO1,ION,JJ) -F_FC/2
+c$$$        call buff_load(ION,IO1,ION,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +8) = buff(inc_buff +8) - f_fc/2
+
+
+                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+                 buff(inc_buff +2) = buff(inc_buff +2) - f_fc/2
+
+ 1685         CONTINUE
+!
+ 1705         CONTINUE
+!//
+c$$$              inc_buff = inc_buff +8
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'1'
+c$$$!                 call flshbf(6)
+c$$$!                 write(6,*)buff(inc_buff-8:inc_buff)
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              inc_buff = inc_buff +2
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'1'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+               inc_buff = 0
+
+               endif
+
+!//
+ 4712         CONTINUE
+!//
+!// set up buffers for 4700 block
+c$$$              do i = 1,nact
+c$$$                 i1_buff(i) = get_scatter_pos(JJ,I,I,IO1,n1,n2,n3)
+c$$$                 d1_buff(i) = 0.0d+00
+c$$$                 i2_buff(i) = get_scatter_pos(I,JJ,IO1,I,n1,n2,n3)
+c$$$                 i3_buff(i) = get_scatter_pos(IO1,I,I,JJ,n1,n2,n3)
+c$$$                 i4_buff(i) = get_scatter_pos(I,IO1,JJ,I,n1,n2,n3)
+c$$$              enddo
+
+
+       do i = 1,nact
+          il = index(jj) + io1
+          jk = index(i) + i
+          ijkl_mi = min(il,jk)
+          ijkl_ma = max(il,jk)
+          i1_buff(i) = index(ijkl_ma) + ijkl_mi
+          
+          d1_buff(i) = 0.0d+00
+      enddo
+
+!//
+!
+!  LOOP OVER BETA DETS OF THE RIGHT GROUP AND SYMMETRY.
+!
+              CALL RESETCO(LBOX3,NSPACE,NB,IBMA,IBMI,LBOX4)
+!
+              DO 4700 IGB=1,ITGB
+              IF (LGCOM(IGB,IGA).NE.1.OR.LGCOM(IGB,IGA2).NE.1) GOTO 4690
+              JCI1 = JPZA1 + LDISB(KSYM,IGB,IGA)
+              JCI2 = JPZA2 + LDISB(KSYM,IGB,IGA2)
+!
+              CALL RESETDE(LBOX3,NSPACE,NB,MSTA,IBCON1)
+              ISTB = 1
+              DO 4680 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                 IENB = LSBC(KKB)
+                 DO IIZ=ISTB,IENB-1
+                    CALL MOVEUP2(LBOX3,NSPACE,NB,MSTA,IBCON1)
+                 ENDDO
+                 ISTB = IENB
+                 JCI1 = JCI1 + 1
+                 JCI2 = JCI2 + 1
+!
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC+ WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI2,KKI)
+                 ENDDO
+                 F_FC = F_FC*KPER1
+!
+                 DO 4670 IK=1,NB
+                    ION = IBCON1(IK)
+
+!A B -> B A'  WHERE: A'.GT.A
+!                 FDM2(JJ,ION,ION,IO1) =FDM2(JJ,ION,ION,IO1) +F_FC/2
+c$$$        call buff_load(JJ,ION,ION,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+c$$$                    d1_buff(ion) = d1_buff(ion) + f_fc/2
+
+!                 FDM2(ION,JJ,IO1,ION) =FDM2(ION,JJ,IO1,ION) +F_FC/2
+c$$$        call buff_load(ION,JJ,IO1,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+
+!$$$!------------- (DE)EXCITE BELOW
+!                 FDM2(IO1,ION,ION,JJ) =FDM2(IO1,ION,ION,JJ) +F_FC/2
+c$$$        call buff_load(IO1,ION,ION,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+
+!                 FDM2(ION,IO1,JJ,ION) =FDM2(ION,IO1,JJ,ION) +F_FC/2
+c$$$        call buff_load(ION,IO1,JJ,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'2'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+        d1_buff(ion) = d1_buff(ion) + f_fc/2
+
+ 4670            CONTINUE
+!
+ 4680         CONTINUE
+!
+ 4690         CALL PUSHCO(LBOX3,NSPACE,NB,IBMA,IBMI,LBOX4,IEND)
+ 4700         CONTINUE
+!//
+c$$$              do i = 1,nact
+c$$$                 if(abs(d1_buff(i)).gt.0.0d+00)then
+c$$$                    ibuff(inc_buff +1) = i1_buff(i)
+c$$$                    buff(inc_buff +1) = d1_buff(i)
+c$$$                    ibuff(inc_buff +2) = i2_buff(i)
+c$$$                    buff(inc_buff +2) = d1_buff(i)
+c$$$                    ibuff(inc_buff +3) = i3_buff(i)
+c$$$                    buff(inc_buff +3) = d1_buff(i)
+c$$$                    ibuff(inc_buff +4) = i4_buff(i)
+c$$$                    buff(inc_buff +4) = d1_buff(i)
+c$$$                    inc_buff = inc_buff +4
+c$$$                 endif
+c$$$              enddo
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'2'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              do i = 1,nact
+                 if(abs(d1_buff(i)).gt.screen_tol)then                 
+                 inc_buff = inc_buff +1
+                 ibuff(inc_buff) = i1_buff(i)
+                 buff(inc_buff) = d1_buff(i)
+                 endif
+              enddo
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'2'
+!                 call flshbf(6)
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+                 
+              endif
+
+!//
+!
+! --  DOUBLE ALPHA EXCITATIONS START HERE  ---
+!
+ 4800         CONTINUE
+!
+            IF (IA1.EQ.NA) GOTO 4850
+            IF (JJ.EQ.NACT) GOTO 4850
+!
+            DO II=1,NSPACE
+               LBOX3(II) = LBOX2(II)
+            ENDDO
+            IAES3 = 1
+            DO KK=1,ISPA1-1
+               IAES3 = IAES3 + LBOX2(KK)
+            ENDDO
+!
+!  LOOP OVER SPACES TO EXCITE ELECTRONS FROM, MUST BE GE THAN
+!  SPACE OF FIRST EXCITATION, ISPA1.
+!
+            DO 3890 ISPA3 = ISPA1,NSPACE
+               IF (LBOX1(ISPA3).EQ.0) GOTO 3887
+               IF (ISPA3.EQ.ISPA1.AND.IA1.EQ.IEAE) GOTO 3887
+               IOC3 = LBOX2(ISPA3)
+               IF (IOC3.EQ.0) GOTO 3887
+!
+               IAEE3 = IAES3 + LBOX2(ISPA3)-1
+               LBOX3(ISPA3) = LBOX3(ISPA3)-1
+!
+!  LOOP OVER ELECTRONS IN ISPA3, WHICH ARE LARGER THAN IA1,
+!  MAKING SURE IT ISN'T THE ALREADY EXCITED ELECTRON.
+!
+               JSTA3 = IAES3
+               IF (ISPA3.EQ.ISPA1) THEN
+                  JSTA3=IA1
+                  IF (IGAP-1.EQ.IA1) JSTA3=JSTA3+1
+               ENDIF
+!
+               DO 3880 IA3=JSTA3,IAEE3
+                  IF (IA3.EQ.IGAP-1) GOTO 3880
+                  IO3 = IACON2(IA3)
+                  IS3 = IOB(IO3)
+!
+!  LOOP OVER SPACES TO EXCITE ELECTRON INTO.  MUST BE GE THAN
+!  SPACE FIRST ELECTRON WAS EXCITED INTO.
+!
+                  IGAE3 = 0
+                  DO JIK=1,ISPA2-1
+                     IGAE3 = IGAE3 + LBOX2(JIK)
+                  ENDDO
+                  DO 3850 ISPA4=ISPA2,NSPACE
+!
+!  IGAS3, IGAE3 ARE ELECTRONS SPECIFYING ISPA4 SPACE ELECTRON LIMITS.
+!
+                  LBOX3(ISPA4) = LBOX3(ISPA4) + 1
+                  IGAS3 = IGAE3 + 1
+                  IGAE3 = IGAE3 + LBOX2(ISPA4)
+                  IF (LBOX3(ISPA3).LT.IAMI(ISPA3)) GOTO 3840
+                  IF (LBOX3(ISPA4).GT.IAMA(ISPA4)) GOTO 3840
+                  IF (LBOX3(ISPA2).LT.IAMI(ISPA2)) GOTO 3840
+                  IF (LBOX3(ISPA2).GT.IAMA(ISPA2)) GOTO 3840
+!
+             IF (ISPA4.EQ.ISPA2.AND.JJ.EQ.MSTA(ISPA2+1)-1) GOTO 3840
+!
+!  GET GROUP NUMBER
+!
+               CALL POSITCO(LBOX5,NSPACE,NA,IAMA,IAMI,LBOX4,LBOX3,IGA3)
+               NIAS3 = NAST(IGA3)
+!
+!  MAKE GAP INFORMATION HERE.
+!
+                  IGAA3 = MAX(IGAS3,IGAP)
+!
+                  IF (LBOX2(ISPA4).EQ.0) THEN
+                     ISTA3 = MSTA(ISPA4)
+                     IEND3 = MSTA(ISPA4+1)-1
+                  ELSEIF (ISPA4.EQ.ISPA2) THEN
+                     ISTA3 = JJ+1
+                     IEND3 = IACON2(IGAA3)-1
+!
+!  I AM SUSPECT ABOUT THIS NEXT LINE, WE'LL SEE WHAT HAPPENS.......
+!
+                     IF (IGAP-1.EQ.IGAE3) IEND3=MSTA(ISPA2+1)-1
+!
+                  ELSE
+                     ISTA3 = MSTA(ISPA4)
+                     IEND3 = IACON2(IGAA3)-1
+                  ENDIF
+!
+!  LOOP OVER GAPS
+!
+                  DO 3830 IGAP3=IGAA3,IGAE3+1
+!
+                     DO 3820 JJ3=ISTA3,IEND3
+                        IS4 = IOB(JJ3)
+                        IP2 = LGMUL(IS3,IS4)
+                        IF (IP1.NE.IP2) GOTO 3820
+!
+              CALL REDE00(IACON2,IBCON1,NA,IA3,IGAP3-1,JJ3,JPERA3)
+              CALL IDPOST(IBCON1,NA,LBOX3,NSPACE,MSTA,IDIM,Y,NX,LBST,
+     *                  LANDET(1,IGA3),IBCON2,JPOSA3)
+              IPER3 = ((-1)**(JPERA3+JPERA))*2
+              KAPOS3 = JPOSA3 + NIAS3
+              JPZA3 = LSPA(KAPOS3)
+
+c$$$         ibuff(inc_buff+1)= get_scatter_pos(JJ,JJ3,IO3,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+1)= 0.0d+00
+c$$$         ibuff(inc_buff+2)= get_scatter_pos(JJ3,JJ,IO1,IO3,n1,n2,n3)
+c$$$         buff(inc_buff+2)= 0.0d+00
+c$$$         ibuff(inc_buff+3)= get_scatter_pos(JJ,JJ3,IO1,IO3,n1,n2,n3)
+c$$$         buff(inc_buff+3)= 0.0d+00
+c$$$         ibuff(inc_buff+4)= get_scatter_pos(JJ3,JJ,IO3,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+4)= 0.0d+00
+c$$$         ibuff(inc_buff+5)= get_scatter_pos(IO1,IO3,JJ3,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+5)= 0.0d+00
+c$$$         ibuff(inc_buff+6)= get_scatter_pos(IO3,IO1,JJ,JJ3,n1,n2,n3)
+c$$$         buff(inc_buff+6)= 0.0d+00
+c$$$         ibuff(inc_buff+7)= get_scatter_pos(IO1,IO3,JJ,JJ3,n1,n2,n3)
+c$$$         buff(inc_buff+7)= 0.0d+00
+c$$$         ibuff(inc_buff+8)= get_scatter_pos(IO3,IO1,JJ3,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+8)= 0.0d+00
+
+         ibuff(inc_buff +1) = 
+     $        get_scatter_pos_sym(JJ,JJ3,IO3,IO1,index,offset)
+         buff(inc_buff +1) = 0.0d+00
+
+         ibuff(inc_buff +2) = 
+     $        get_scatter_pos_sym(JJ,JJ3,IO1,IO3,index,offset)
+         buff(inc_buff +2) = 0.0d+00
+!
+!  LOOP OVER BETA STRINGS OF RIGHT SYMMETRY AND GROUP.
+!
+              DO 3700 IGB=1,ITGB
+              IF (LGCOM(IGB,IGA).NE.1.OR.LGCOM(IGB,IGA3).NE.1) GOTO 3700
+              JCI1 = JPZA1 + LDISB(KSYM,IGB,IGA)
+              JCI3 = JPZA3 + LDISB(KSYM,IGB,IGA3)
+!
+              DO 3680 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                 JCI1 = JCI1 + 1
+                 JCI3 = JCI3 + 1
+!
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC + WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI3,KKI)
+                 ENDDO
+                 F_FC = F_FC*IPER3
+
+! A A2 --> A'2 A'    A' > A    A'2 > A2    A2 > A    A'2 > A'
+!                    FDM2(JJ,JJ3,IO3,IO1) =FDM2(JJ,JJ3,IO3,IO1) +F_FC/2
+c$$$           call buff_load(JJ,JJ3,IO3,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+!                    FDM2(JJ3,JJ,IO1,IO3) =FDM2(JJ3,JJ,IO1,IO3) +F_FC/2
+c$$$           call buff_load(JJ3,JJ,IO1,IO3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +2) = buff(inc_buff +2) + f_fc/2
+
+!                    FDM2(JJ,JJ3,IO1,IO3) =FDM2(JJ,JJ3,IO1,IO3) -F_FC/2
+c$$$           call buff_load(JJ,JJ3,IO1,IO3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +3) = buff(inc_buff +3) - f_fc/2
+
+!                    FDM2(JJ3,JJ,IO3,IO1) =FDM2(JJ3,JJ,IO3,IO1) -F_FC/2
+c$$$           call buff_load(JJ3,JJ,IO3,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +4) = buff(inc_buff +4) - f_fc/2
+
+!$$$!--------------- (DE)DOWN BELOW
+!                    FDM2(IO1,IO3,JJ3,JJ) =FDM2(IO1,IO3,JJ3,JJ) +F_FC/2
+c$$$           call buff_load(IO1,IO3,JJ3,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +5) = buff(inc_buff +5) + f_fc/2
+
+!                    FDM2(IO3,IO1,JJ,JJ3) =FDM2(IO3,IO1,JJ,JJ3) +F_FC/2
+c$$$           call buff_load(IO3,IO1,JJ,JJ3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +6) = buff(inc_buff +6) + f_fc/2
+
+!                    FDM2(IO1,IO3,JJ,JJ3) =FDM2(IO1,IO3,JJ,JJ3) -F_FC/2
+c$$$           call buff_load(IO1,IO3,JJ,JJ3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +7) = buff(inc_buff +7) - f_fc/2
+
+!                    FDM2(IO3,IO1,JJ3,JJ) =FDM2(IO3,IO1,JJ3,JJ) -F_FC/2
+c$$$           call buff_load(IO3,IO1,JJ3,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +8) = buff(inc_buff +8) - f_fc/2
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'3'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+                 buff(inc_buff +2) = buff(inc_buff +2) - f_fc/2
+
+ 3680         CONTINUE
+!
+ 3700         CONTINUE
+!//
+c$$$              inc_buff = inc_buff +8
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'3'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+              inc_buff = inc_buff +2
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'3'
+!                 call flshbf(6)
+!                 write(6,*)buff(inc_buff-8:inc_buff)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!//
+ 3820                CONTINUE
+!
+                     ISTA3 = IACON2(IGAP3)+1
+                     IEND3 = IACON2(IGAP3+1)-1
+                     IF (IGAP3.EQ.IGAE3) IEND3=MSTA(ISPA4+1)-1
+ 3830             CONTINUE
+!
+ 3840             LBOX3(ISPA4) = LBOX3(ISPA4) - 1
+ 3850             CONTINUE
+!
+ 3880          CONTINUE
+!
+               LBOX3(ISPA3) = LBOX3(ISPA3)+1
+ 3887          IAES3 = IAES3 + LBOX3(ISPA3)
+ 3890       CONTINUE
+!
+ 4850                CONTINUE
+!
+                  ISTA = IACON1(IGAP)+1
+                  IEND = IACON1(IGAP+1)-1
+                  IF (IGAP.EQ.IGAE) IEND=MSTA(ISPA2+1)-1
+ 4860             CONTINUE
+!
+ 4870             LBOX2(ISPA2) = LBOX2(ISPA2) - 1
+ 4880          CONTINUE
+!
+ 4885          CONTINUE
+!
+               LBOX2(ISPA1) = LBOX2(ISPA1)+1
+ 4890       CONTINUE
+
+!
+!  DIAGONAL ELEMENTS HERE
+
+
+
+            DO 67 II=1,NA
+               I1 = IACON1(II)
+!               IND1 = INDEX(I1+1)
+!
+!  LOOP OVER BETA STRINGS OF RIGHT SYMMETRY AND GROUP.
+!
+              DO 64 JJ=II+1,NA
+                 I2 = IACON1(JJ)
+!
+
+c$$$         ibuff(inc_buff+1)= get_scatter_pos(I2,I1,I1,I2,n1,n2,n3)
+c$$$         buff(inc_buff+1)= 0.0d+00
+c$$$         ibuff(inc_buff+2)= get_scatter_pos(I2,I1,I2,I1,n1,n2,n3)
+c$$$         buff(inc_buff+2)= 0.0d+00
+c$$$         ibuff(inc_buff+3)= get_scatter_pos(I1,I2,I2,I1,n1,n2,n3)
+c$$$         buff(inc_buff+3)= 0.0d+00
+c$$$         ibuff(inc_buff+4)= get_scatter_pos(I1,I2,I1,I2,n1,n2,n3)
+c$$$         buff(inc_buff+4)= 0.0d+00
+
+         ibuff(inc_buff +1) = 
+     $        get_scatter_pos_sym(I2,I1,I1,I2,index,offset)
+         buff(inc_buff +1) = 0.0d+00
+
+         ibuff(inc_buff +2) = 
+     $        get_scatter_pos_sym(I2,I1,I2,I1,index,offset)
+         buff(inc_buff +2) = 0.0d+00
+
+
+              DO 3710 IGB=1,ITGB
+              IF (LGCOM(IGB,IGA).NE.1) GOTO 3710
+              JCI1 = JPZA1 + LDISB(KSYM,IGB,IGA)
+!
+              DO 3690 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                 JCI1 = JCI1 + 1
+!
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC + WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI1,KKI)
+                 ENDDO
+
+!A A2 -> A A2
+!                    FDM2(I2,I1,I1,I2) =FDM2(I2,I1,I1,I2) +F_FC
+c$$$           call buff_load(I2,I1,I1,I2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc)
+c$$$                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc
+
+!                    FDM2(I2,I1,I2,I1) =FDM2(I2,I1,I2,I1) -F_FC
+c$$$           call buff_load(I2,I1,I2,I1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc)
+c$$$                  buff(inc_buff +2) = buff(inc_buff +2) - f_fc
+
+!                    FDM2(I1,I2,I2,I1) =FDM2(I1,I2,I2,I1) +F_FC
+c$$$           call buff_load(I1,I2,I2,I1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc)
+c$$$                 buff(inc_buff +3) = buff(inc_buff +3) + f_fc
+
+!                    FDM2(I1,I2,I1,I2) =FDM2(I1,I2,I1,I2) -F_FC
+c$$$           call buff_load(I1,I2,I1,I2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc)
+c$$$                 buff(inc_buff +4) = buff(inc_buff +4) - f_fc
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'4'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc
+                 buff(inc_buff +2) = buff(inc_buff +2) - f_fc
+
+ 3690         CONTINUE
+!
+ 3710         CONTINUE
+!//
+c$$$              inc_buff = inc_buff +4
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'4'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+              inc_buff = inc_buff +2
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'4'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!//
+   64         CONTINUE
+
+!//
+!// set buffers for 4709 block
+c$$$              do i = 1,nact
+c$$$                 i1_buff(i) = get_scatter_pos(I1,i,i,I1,n1,n2,n3)
+c$$$                 d1_buff(i) = 0.0d+00
+c$$$                 i2_buff(i) = get_scatter_pos(i,I1,I1,i,n1,n2,n3)
+c$$$!                 d2_buff(i) = 0.0d+00
+c$$$              enddo
+
+      do i = 1,nact
+         il = index(i1) + i1
+         jk = index(i) + i
+         ijkl_mi = min(il,jk)
+         ijkl_ma = max(il,jk)
+         i1_buff(i) = index(ijkl_ma) + ijkl_mi
+         
+         d1_buff(i) = 0.0d+00
+      enddo
+      dscal_vec(i1) = 2.0d+00
+!//
+!
+!  LOOP OVER BETA DETS OF THE RIGHT GROUP AND SYMMETRY.
+!
+              CALL RESETCO(LBOX3,NSPACE,NB,IBMA,IBMI,LBOX4)
+!
+              DO 4709 IGB=1,ITGB
+              IF (LGCOM(IGB,IGA).NE.1) GOTO 4699
+              JCI1 = JPZA1 + LDISB(KSYM,IGB,IGA)
+!
+              CALL RESETDE(LBOX3,NSPACE,NB,MSTA,IBCON1)
+              ISTB = 1
+              DO 4689 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                 IENB = LSBC(KKB)
+                 DO IIZ=ISTB,IENB-1
+                    CALL MOVEUP2(LBOX3,NSPACE,NB,MSTA,IBCON1)
+                 ENDDO
+                 ISTB = IENB
+                 JCI1 = JCI1 + 1
+!
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC + WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI1,KKI)
+                 ENDDO
+!
+                 DO 4679 IK=1,NB
+                    I2 = IBCON1(IK)
+
+! A B -> B A
+!                    FDM2(I1,I2,I2,I1) =FDM2(I1,I2,I2,I1) +F_FC
+c$$$           call buff_load(I1,I2,I2,I1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc)
+
+c$$$                    d1_buff(i2) = d1_buff(i2) + f_fc
+
+
+!                    FDM2(I2,I1,I1,I2) =FDM2(I2,I1,I1,I2) +F_FC
+c$$$           call buff_load(I2,I1,I1,I2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc)
+
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'5'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+!maybe try a dscal vector of length nact
+        d1_buff(i2) = d1_buff(i2) + 
+     $                   f_fc*dscal_vec(i2)
+
+
+ 4679            CONTINUE
+!
+ 4689         CONTINUE
+!
+ 4699         CALL PUSHCO(LBOX3,NSPACE,NB,IBMA,IBMI,LBOX4,IEND)
+ 4709         CONTINUE
+!
+!//
+c$$$              do i = 1,nact
+c$$$                 if(abs(d1_buff(i)).gt.0.0d+00)then
+c$$$                    ibuff(inc_buff +1) = i1_buff(i)
+c$$$                    buff(inc_buff +1) = d1_buff(i)
+c$$$                    ibuff(inc_buff +2) = i2_buff(i)
+c$$$                    buff(inc_buff +2) = d1_buff(i)
+c$$$                    inc_buff = inc_buff +2
+c$$$                 endif
+c$$$              enddo
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'5'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              do i = 1,nact
+                 if(abs(d1_buff(i)).gt.screen_tol)then
+                    inc_buff = inc_buff +1
+                    ibuff(inc_buff ) = i1_buff(i)
+                    buff(inc_buff ) = d1_buff(i)
+                 endif
+              enddo
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'5'
+!                 call flshbf(6)
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+              dscal_vec(i1) = 1.0d+00
+
+
+!//
+   67       CONTINUE
+
+!
+!  --- END OF LOOP OVER SINGLE ALPHA EXCITATIONS. ---
+!      NOW TO SORT THEM BY POSITIONS WITHIN SYMMETRIES.
+!
+            DO II=1,NSYM
+               CALL FCCSRT4(IGROA(1,II),IPERA(1,II),
+     *              IPOSA(1,II),IMMC(II),IIND1O1(1,II),IIND1O2(1,II))
+            ENDDO
+!
+!  --- END OF LOOP OVER PURE ALPHA EXCITATIONS.
+!  NOW TO LOOP OVER ALL SIMULTANEOUS AB -> A'B' EXCITATIONS.
+!
+      IF (NSPACE.EQ.1) GOTO 3400
+!
+!  ***** GENERAL CASE OF MORE THAN ONE SPACE !!!!! *******
+!
+      IF (.NOT.FDIRCT) THEN
+!
+!  LOOP OVER SINGLE ALPHA EXCITES WITHIN EACH SYMMETRY.
+!
+
+      DO 3000 ISAE=1,NSYM
+         KBSYM=KTAB(ISAE)
+         DO 2900 JSAE=1,IMMC(ISAE)
+            JPOSAE=IPOSA(JSAE,ISAE)
+            JPERAE=IPERA(JSAE,ISAE)
+C$$$        JINDAE=IIND1(JSAE,ISAE)
+            JGROAE=IGROA(JSAE,ISAE)
+!
+!  IF ISAE.EQ.JASYM THEN SPECIAL CASE.
+!
+       IF (ISAE.EQ.JASYM.AND.IGA.EQ.JGROAE) THEN
+!
+!  LOOP OVER ALL RELEVANT BETAS
+!
+            LABPOS = JPZA1
+            LABPOS2 = JPOSAE
+            DO 2813 IGB=1,ITGB
+               IF (LGCOM(IGB,IGA).NE.1) GOTO 2813
+               NIBS = NBST(IGB)
+               DO 2763 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                  LABPOS = LABPOS + 1
+                  LABPOS2 = LABPOS2 + 1
+                  IBPOS = NIBS + LSBC(KKB)
+!
+!  LOOP OVER SINGLE BETA EXCITES FROM IBPOS
+!
+               DO 2613 JBINDX=JB1ST(KBSYM,IBPOS),JB1ST(KBSYM+1,IBPOS)-1
+                  IGB2=JB1GR(JBINDX)
+                  IF (LGCOM(IGB2,JGROAE).NE.1) GOTO 2613
+!
+                  JCIB=JPOSAE+LDISB(KBSYM,IGB2,JGROAE)+JB1PO(JBINDX)
+                  JCIB2=JPZA1+LDISB(KBSYM,IGB2,JGROAE)+JB1PO(JBINDX)
+
+                  F_FC = 0.0D+00
+                  F_FC1 = 0.0D+00
+                 DO KKI=1,NXTW
+           F_FC = F_FC + WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+           F_FC1 =F_FC1+ WSTATE(IWTS(KKI))*AB(LABPOS2,KKI)*AB(JCIB2,KKI)
+                 ENDDO
+                 F_FC = F_FC*JPERAE*JB1PE(JBINDX)
+                 F_FC1 = F_FC1*JPERAE*JB1PE(JBINDX)
+
+! NEEDED FOR SPIN-FREE 2RDM
+                  I1_1=IIND1O1(JSAE,ISAE)
+                  I2_1=JB1O1(JBINDX)
+                  I2_2=JB1O2(JBINDX)
+                  I1_2=IIND1O2(JSAE,ISAE)
+
+!A1 B2 -> A'1 B'2  WHERE: A'1 > A1    B'2 > B2
+!                  FDM2(I1_2,I2_2,I2_1,I1_1) = 
+!     $          FDM2(I1_2,I2_2,I2_1,I1_1) + F_FC/2
+c$$$       call buff_load(I1_2,I2_2,I2_1,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_2,I1_1,I2_1) = 
+!     $           FDM2(I2_2,I1_2,I1_1,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_2,I1_1,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_1,I1_2,I2_2) = 
+!     $           FDM2(I2_1,I1_1,I1_2,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_1,I1_2,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_1,I2_2,I1_2) = 
+!     $          FDM2(I1_1,I2_1,I2_2,I1_2) + F_FC/2
+c$$$       call buff_load(I1_1,I2_1,I2_2,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_2,I2_1,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc
+
+!EXCHANGE
+!                  FDM2(I1_2,I2_1,I2_2,I1_1) = 
+!     $           FDM2(I1_2,I2_1,I2_2,I1_1) + F_FC1/2
+c$$$        call buff_load(I1_2,I2_1,I2_2,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+!                  FDM2(I2_1,I1_2,I1_1,I2_2) = 
+!     $           FDM2(I2_1,I1_2,I1_1,I2_2) + F_FC1/2
+c$$$        call buff_load(I2_1,I1_2,I1_1,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+!                  FDM2(I2_2,I1_1,I1_2,I2_1) = 
+!     $           FDM2(I2_2,I1_1,I1_2,I2_1) + F_FC1/2
+c$$$        call buff_load(I2_2,I1_1,I1_2,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+!                  FDM2(I1_1,I2_2,I2_1,I1_2) = 
+!     $           FDM2(I1_1,I2_2,I2_1,I1_2) + F_FC1/2
+c$$$        call buff_load(I1_1,I2_2,I2_1,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_1,I2_2,I1_1,index,offset)
+        buff(inc_buff) = f_fc1/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc1
+
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'6'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'6'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+
+ 2613          CONTINUE
+!
+ 2763          CONTINUE
+ 2813       CONTINUE
+!
+
+       ELSE !(ISAE.EQ.JASYM.AND.IGA.EQ.JGROAE)
+!
+!  LOOP OVER ALL RELEVANT (A-)BETA DETS.
+!
+
+            LABPOS = JPZA1
+            DO 2800 IGB=1,ITGB
+               IF (LGCOM(IGB,IGA).NE.1) GOTO 2800
+               NIBS = NBST(IGB)
+               DO 2750 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                  LABPOS = LABPOS + 1
+                  IBPOS = NIBS + LSBC(KKB)
+!
+!  LOOP OVER SINGLE BETA EXCITES FROM IBPOS
+!
+               DO 2600 JBINDX=JB1ST(KBSYM,IBPOS),JB1ST(KBSYM+1,IBPOS)-1
+                  IGB2=JB1GR(JBINDX)
+                  IF (LGCOM(IGB2,JGROAE).NE.1) GOTO 2600
+!
+                  JCIB=JPOSAE+LDISB(KBSYM,IGB2,JGROAE)+JB1PO(JBINDX)
+
+                  F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+            F_FC = F_FC + WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+                 ENDDO
+                  F_FC = F_FC*JPERAE*JB1PE(JBINDX)
+
+!B1 12 -> B'1 1'2  WHERE: A'1 > A1    B'2 > B2
+                  I1_1=IIND1O1(JSAE,ISAE)
+                  I2_1=JB1O1(JBINDX)
+                  I2_2=JB1O2(JBINDX)
+                  I1_2=IIND1O2(JSAE,ISAE)
+
+!DN,DN->UP,UP
+!                  FDM2(I1_2,I2_2,I2_1,I1_1) = 
+!     $           FDM2(I1_2,I2_2,I2_1,I1_1) + F_FC/2
+c$$$        call buff_load(I1_2,I2_2,I2_1,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_2,I1_1,I2_1) = 
+!     $           FDM2(I2_2,I1_2,I1_1,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_2,I1_1,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_1,I1_2,I2_2) = 
+!     $           FDM2(I2_1,I1_1,I1_2,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_1,I1_2,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_1,I2_2,I1_2) = 
+!     $           FDM2(I1_1,I2_1,I2_2,I1_2) + F_FC/2
+c$$$        call buff_load(I1_1,I2_1,I2_2,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_2,I2_1,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc
+
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'7'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'7'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+
+ 2600          CONTINUE
+!
+ 2750          CONTINUE
+ 2800       CONTINUE
+!
+!  LOOP OVER ALL RELEVANT (A'-)BETA DETS.
+!
+            LABPOS = JPOSAE
+            DO 2803 IGB=1,ITGB
+               IF (LGCOM(IGB,JGROAE).NE.1) GOTO 2803
+               NIBS = NBST(IGB)
+               DO 2753 KKB=LSBS(KBSYM,IGB),LSBS(KBSYM+1,IGB)-1
+                  LABPOS = LABPOS + 1
+                  IBPOS = NIBS + LSBC(KKB)
+!
+!  LOOP OVER SINGLE BETA EXCITES FROM IBPOS
+!
+               DO 2603 JBINDX=JB1ST(KSYM,IBPOS),JB1ST(KSYM+1,IBPOS)-1
+                  IGB2=JB1GR(JBINDX)
+                  IF (LGCOM(IGB2,IGA).NE.1) GOTO 2603
+!
+                  JCIB=JPZA1+LDISB(KSYM,IGB2,IGA)+JB1PO(JBINDX)
+                  F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+            F_FC = F_FC + WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+                 ENDDO
+                  F_FC = F_FC*JPERAE*JB1PE(JBINDX)
+
+!B1 A2 -> A'1 B'2  WHERE: A'1 > A1    B'2 > B2
+                  I1_1=IIND1O1(JSAE,ISAE)
+                  I2_1=JB1O1(JBINDX)
+                  I2_2=JB1O2(JBINDX)
+                  I1_2=IIND1O2(JSAE,ISAE)
+
+!UP,DN->DN,UP
+!                  FDM2(I1_2,I2_1,I2_2,I1_1) = 
+!     $           FDM2(I1_2,I2_1,I2_2,I1_1) + F_FC/2
+c$$$        call buff_load(I1_2,I2_1,I2_2,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_2,I1_1,I2_2) = 
+!     $           FDM2(I2_1,I1_2,I1_1,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_2,I1_1,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_1,I1_2,I2_1) = 
+!     $           FDM2(I2_2,I1_1,I1_2,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_1,I1_2,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_2,I2_1,I1_2) = 
+!     $           FDM2(I1_1,I2_2,I2_1,I1_2) + F_FC/2
+c$$$        call buff_load(I1_1,I2_2,I2_1,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_1,I2_2,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_1.and.I2_2.eq.I1_1)buff(inc_buff) = f_fc
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc
+
+
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'8'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'8'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+
+ 2603          CONTINUE
+!
+ 2753          CONTINUE
+ 2803       CONTINUE
+!
+      ENDIF !(ISAE.EQ.JASYM.AND.IGA.EQ.JGROAE) 
+!
+ 2900    CONTINUE
+ 3000 CONTINUE
+!
+      ELSE !(.NOT.FDIRCT)
+!
+!  ***** DIRECT METHOD BELOW *****
+!
+      DO 4000 ISAE=1,NSYM
+         KBSYM = KTAB(ISAE)
+!
+!  ANALYSE EXCITED A' GROUPS FOR COMPATIBILITY WITH B.
+!
+      NGRPS = 0
+      DO 1976 II=1,IMMC(ISAE)
+         ICGR = IGROA(II,ISAE)
+         DO JJ=1,NGRPS
+            IF (JB1GR(JJ).EQ.ICGR) GOTO 1976
+         ENDDO
+         NGRPS = NGRPS + 1
+         JB1GR(NGRPS) = ICGR
+ 1976 CONTINUE
+!
+! FIRST TYPE OF BETAS, KSYM -> KBSYM
+!
+          CALL RESETCO(LBOX2,NSPACE,NB,IBMA,IBMI,LBOX3)
+          DO 7400 IGB=1,ITGB
+             IF (LGCOM(IGB,IGA).NE.1) GOTO 7399
+             LAB1 = JPZA1 + LDISB(KSYM,IGB,IGA)
+!
+             CALL RESETDE(LBOX2,NSPACE,NB,MSTA,IBCON1)
+             NIBS = NBST(IGB)
+             ISTB = 1
+             DO 7300 KKB=LSBS(KSYM,IGB),LSBS(KSYM+1,IGB)-1
+                IENB = LSBC(KKB)
+                DO IIZ=ISTB,IENB-1
+                   CALL MOVEUP2(LBOX2,NSPACE,NB,MSTA,IBCON1)
+                ENDDO
+                ISTB = IENB
+!
+                IBPOS = NIBS + LSBC(KKB)
+                LABPOS = LAB1 + LSPB(IBPOS)
+!
+! LOOP OVER SINGLE BETA EXCITES FROM IBPOS WHICH ARE OF SYMMETRY KBSYM
+!
+                MESYM1 = LGMUL(KSYM,KBSYM)
+                DO II=1,NSPACE
+                   LBOX3(II) = LBOX2(II)
+                ENDDO
+                IEBS = NB + 1
+                DO 7290 ISPB1=NSPACE,1,-1
+                   IOC1 = LBOX2(ISPB1)
+                   IEBE = IEBS - 1
+                   IEBS = IEBS - IOC1
+                   IF (IOC1.EQ.0) GO TO 7290
+                   LBOX3(ISPB1) = LBOX3(ISPB1)-1
+!
+!  LOOP ELECTRONS IN SPACE ISPB1
+!  IEBS, IEBE ARE THE ELECTRONS IN SPACE ISPB1
+!
+                DO 7285 IB1 = IEBE,IEBS,-1
+                   IO1 = IBCON1(IB1)
+                   MESYM2 = LGMUL(MESYM1,IOB(IO1))
+                   IGBE = IEBE - LBOX2(ISPB1)
+!
+!  LOOP OVER POSSIBLE SPACES TO EXCITE INTO.
+!
+                DO 7280 ISPB2=ISPB1,NSPACE
+!
+!  IGBS,IGBE ARE ELECTRONS SPECIFYING ISPB2 SPACE ELECTRON LIMITS.
+!
+                   IGBS = IGBE + 1
+                   IGBE = IGBE + LBOX2(ISPB2)
+!
+                   LBOX3(ISPB2) = LBOX3(ISPB2) + 1
+                   IF (LBOX3(ISPB1).LT.IBMI(ISPB1)) GO TO 7270
+                   IF (LBOX3(ISPB2).GT.IBMA(ISPB2)) GO TO 7270
+!
+!  GET GROUP NUMBER
+!
+          CALL POSITCO(LBOX5,NSPACE,NB,IBMA,IBMI,LBOX4,LBOX3,IGB2)
+          NIAS = NBST(IGB2)
+!
+! CHECK FOR A' GROUP COMPATIBILITY
+!
+             DO II=1,NGRPS
+                IAGRP = JB1GR(II)
+                IF (LGCOM(IGB2,IAGRP).EQ.1) GOTO 7555
+             ENDDO
+             GOTO 7270
+ 7555        CONTINUE
+!
+!  MAKE GAP INFORMATION HERE.
+!
+                  IGBA = MAX(IB1+1,IGBS)
+                  IF (LBOX2(ISPB2).EQ.0) THEN
+                     ISTA = MSTA(ISPB2)
+                     IEND = MSTA(ISPB2+1)-1
+                  ELSEIF (ISPB2.EQ.ISPB1) THEN
+                     ISTA = IO1+1
+                     IEND = IBCON1(IGBA)-1
+                     IF (IB1.EQ.IEBE) IEND=MSTA(ISPB1+1)-1
+                  ELSE
+                     ISTA = MSTA(ISPB2)
+                     IEND = IBCON1(IGBA)-1
+                  ENDIF
+!
+!  LOOP OVER GAPS
+!
+                  DO 7260 IGAP=IGBA,IGBE+1
+!
+                     DO 7250 JJ=ISTA,IEND
+!
+! CHECK TO SEE IF EXCITED BETA IS OF RIGHT SYMMETRY (KBSYM)
+!
+            IF (IOB(JJ).NE.MESYM2) GOTO 7250
+!
+c$$$            IND1 = INDEX(JJ) + IO1
+            CALL REDE00(IBCON1,IBCON2,NB,IB1,IGAP-1,JJ,IPER)
+            CALL IDPOST(IBCON2,NB,LBOX3,NSPACE,MSTA,IDIM,Y,NX,LBST,
+     *                  LBNDET(1,IGB2),IACON2,IPOSB)
+            QJPER = ((-1)**IPER)
+            JB1P = LSPB(IPOSB + NIAS)
+!
+            DO 3900 JSAE=1,IMMC(ISAE)
+               JGROAE=IGROA(JSAE,ISAE)
+               IF (LGCOM(IGB2,JGROAE).NE.1) GOTO 3900
+!
+               JPOSAE=IPOSA(JSAE,ISAE)
+               JCIB = JB1P + JPOSAE + LDISB(KBSYM,IGB2,JGROAE)
+
+               JPERAE=IPERA(JSAE,ISAE)
+!
+             F_FC = 0.0D+00
+             DO KKI=1,NXTW
+            F_FC = F_FC + WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+             ENDDO
+             F_FC = F_FC*JPERAE*QJPER
+
+!B1 12 -> B'1 1'2  WHERE: A'1 > A1    B'2 > B2
+                  I1_1=IO1
+                  I2_1=IIND1O1(JSAE,ISAE)
+                  I2_2=IIND1O2(JSAE,ISAE)
+                  I1_2=JJ
+
+!DN,DN->UP,UP
+!                  FDM2(I1_2,I2_2,I2_1,I1_1) = 
+!     $           FDM2(I1_2,I2_2,I2_1,I1_1) + F_FC/2
+c$$$        call buff_load(I1_2,I2_2,I2_1,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_2,I1_1,I2_1) = 
+!     $           FDM2(I2_2,I1_2,I1_1,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_2,I1_1,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_1,I1_2,I2_2) = 
+!     $           FDM2(I2_1,I1_1,I1_2,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_1,I1_2,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_1,I2_2,I1_2) = 
+!     $           FDM2(I1_1,I2_1,I2_2,I1_2) + F_FC/2
+c$$$        call buff_load(I1_1,I2_1,I2_2,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_2,I2_1,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1.and.i1_2.ne.i1_1)
+     $       buff(inc_buff) = f_fc
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'9'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'9'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!
+ 3900       CONTINUE
+!
+ 7250                CONTINUE
+!
+                  ISTA = IBCON1(IGAP)+1
+                  IEND = IBCON1(IGAP+1)-1
+                  IF (IGAP.EQ.IGBE) IEND=MSTA(ISPB2+1)-1
+ 7260             CONTINUE
+!
+ 7270              LBOX3(ISPB2) = LBOX3(ISPB2) - 1
+ 7280           CONTINUE
+!
+ 7285           CONTINUE
+!
+                   LBOX3(ISPB1) = LBOX3(ISPB1) + 1
+ 7290           CONTINUE
+!
+ 7300        CONTINUE
+!
+ 7399        CALL PUSHCO(LBOX2,NSPACE,NB,IBMA,IBMI,LBOX3,IEND)
+ 7400     CONTINUE
+!
+!
+! SECOND TYPE OF BETAS, KBSYM -> KSYM
+!
+          CALL RESETCO(LBOX2,NSPACE,NB,IBMA,IBMI,LBOX3)
+          DO 7801 IGB=1,ITGB
+!
+! CHECK FOR A' GROUP COMPATIBILITY
+!
+             DO II=1,NGRPS
+                IAGRP = JB1GR(II)
+                IF (LGCOM(IGB,IAGRP).EQ.1) GOTO 7655
+             ENDDO
+             GOTO 7799
+ 7655        CONTINUE
+!
+             CALL RESETDE(LBOX2,NSPACE,NB,MSTA,IBCON1)
+             NIBS = NBST(IGB)
+             ISTB = 1
+!
+             DO 7701 KKB=LSBS(KBSYM,IGB),LSBS(KBSYM+1,IGB)-1
+                IENB = LSBC(KKB)
+                DO IIZ=ISTB,IENB-1
+                   CALL MOVEUP2(LBOX2,NSPACE,NB,MSTA,IBCON1)
+                ENDDO
+                ISTB = IENB
+!
+                IBPOS = NIBS + LSBC(KKB)
+                LAB1 = LSPB(IBPOS)
+!
+! LOOP OVER SINGLE BETA EXCITES FROM IBPOS WHICH ARE OF SYMMETRY KSYM
+!
+                MESYM1 = LGMUL(KSYM,KBSYM)
+                DO II=1,NSPACE
+                   LBOX3(II) = LBOX2(II)
+                ENDDO
+                IEBS = NB + 1
+                DO 7691 ISPB1=NSPACE,1,-1
+                   IOC1 = LBOX2(ISPB1)
+                   IEBE = IEBS - 1
+                   IEBS = IEBS - IOC1
+                   IF (IOC1.EQ.0) GO TO 7691
+                   LBOX3(ISPB1) = LBOX3(ISPB1)-1
+!
+!  LOOP ELECTRONS IN SPACE ISPB1
+!  IEBS, IEBE ARE THE ELECTRONS IN SPACE ISPB1
+!
+                DO 7686 IB1 = IEBE,IEBS,-1
+                   IO1 = IBCON1(IB1)
+                   MESYM2 = LGMUL(MESYM1,IOB(IO1))
+                   IGBE = IEBE - LBOX2(ISPB1)
+!
+!  LOOP OVER POSSIBLE SPACES TO EXCITE INTO.
+!
+                DO 7681 ISPB2=ISPB1,NSPACE
+!
+!  IGBS,IGBE ARE ELECTRONS SPECIFYING ISPB2 SPACE ELECTRON LIMITS.
+!
+                   IGBS = IGBE + 1
+                   IGBE = IGBE + LBOX2(ISPB2)
+!
+                   LBOX3(ISPB2) = LBOX3(ISPB2) + 1
+                   IF (LBOX3(ISPB1).LT.IBMI(ISPB1)) GO TO 7671
+                   IF (LBOX3(ISPB2).GT.IBMA(ISPB2)) GO TO 7671
+!
+          CALL POSITCO(LBOX5,NSPACE,NB,IBMA,IBMI,LBOX4,LBOX3,IGB2)
+          IF (LGCOM(IGB2,IGA).NE.1) GOTO 7671
+          JCIBS = JPZA1 + LDISB(KSYM,IGB2,IGA)
+          NIAS = NBST(IGB2)
+!
+!  MAKE GAP INFORMATION HERE.
+!
+                  IGBA = MAX(IB1+1,IGBS)
+                  IF (LBOX2(ISPB2).EQ.0) THEN
+                     ISTA = MSTA(ISPB2)
+                     IEND = MSTA(ISPB2+1)-1
+                  ELSEIF (ISPB2.EQ.ISPB1) THEN
+                     ISTA = IO1+1
+                     IEND = IBCON1(IGBA)-1
+                     IF (IB1.EQ.IEBE) IEND=MSTA(ISPB1+1)-1
+                  ELSE
+                     ISTA = MSTA(ISPB2)
+                     IEND = IBCON1(IGBA)-1
+                  ENDIF
+!
+!  LOOP OVER GAPS
+!
+                  DO 7660 IGAP=IGBA,IGBE+1
+!
+                     DO 7650 JJ=ISTA,IEND
+!
+! CHECK TO SEE IF EXCITED BETA IS OF RIGHT SYMMETRY (KBSYM)
+!
+            IF (IOB(JJ).NE.MESYM2) GOTO 7650
+!
+            CALL REDE00(IBCON1,IBCON2,NB,IB1,IGAP-1,JJ,IPER)
+            CALL IDPOST(IBCON2,NB,LBOX3,NSPACE,MSTA,IDIM,Y,NX,LBST,
+     *                  LBNDET(1,IGB2),IACON2,IPOSB)
+            QJPER = ((-1)**IPER)
+            JCIB= JCIBS + LSPB(IPOSB + NIAS)
+!
+            DO 4300 JSAE=1,IMMC(ISAE)
+               JGROAE=IGROA(JSAE,ISAE)
+               IF (LGCOM(IGB,JGROAE).NE.1) GOTO 4300
+!
+               JPOSAE=IPOSA(JSAE,ISAE)
+               LABPOS = LAB1 + JPOSAE + LDISB(KBSYM,IGB,JGROAE)
+!
+               JPERAE=IPERA(JSAE,ISAE)
+               F_FC = 0.0D+00
+               DO KKI=1,NXTW
+            F_FC = F_FC + WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+               ENDDO
+               F_FC = F_FC*JPERAE*QJPER
+
+!B1 A2 -> A'1 B'2  WHERE: A'1 > A1    B'2 > B2
+                  I1_1=IO1
+                  I2_1=IIND1O1(JSAE,ISAE)
+                  I2_2=IIND1O2(JSAE,ISAE)
+                  I1_2=JJ
+
+!UP,DN->DN,UP
+!                  FDM2(I1_2,I2_1,I2_2,I1_1) = 
+!     $           FDM2(I1_2,I2_1,I2_2,I1_1) + F_FC/2
+c$$$        call buff_load(I1_2,I2_1,I2_2,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_2,I1_1,I2_2) = 
+!     $           FDM2(I2_1,I1_2,I1_1,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_2,I1_1,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_1,I1_2,I2_1) = 
+!     $           FDM2(I2_2,I1_1,I1_2,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_1,I1_2,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_2,I2_1,I1_2) = 
+!     $           FDM2(I1_1,I2_2,I2_1,I1_2) + F_FC/2
+c$$$        call buff_load(I1_1,I2_2,I2_1,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_1,I2_2,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1.and.i1_2.ne.i1_1)
+     $       buff(inc_buff) = f_fc
+
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'10'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'10'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!
+ 4300       CONTINUE
+!
+ 7650                CONTINUE
+!
+                  ISTA = IBCON1(IGAP)+1
+                  IEND = IBCON1(IGAP+1)-1
+                  IF (IGAP.EQ.IGBE) IEND=MSTA(ISPB2+1)-1
+ 7660             CONTINUE
+!
+ 7671              LBOX3(ISPB2) = LBOX3(ISPB2) - 1
+ 7681           CONTINUE
+!
+ 7686           CONTINUE
+!
+                   LBOX3(ISPB1) = LBOX3(ISPB1) + 1
+ 7691           CONTINUE
+!
+ 7701        CONTINUE
+!
+ 7799        CALL PUSHCO(LBOX2,NSPACE,NB,IBMA,IBMI,LBOX3,IEND)
+ 7801     CONTINUE
+!
+ 4000 CONTINUE
+!
+      ENDIF
+!
+!  ***** END OF DIRECT OPTION *****
+!
+!  **** END OF GENERAL CASE OF MORE THAN ONE SPACE ******
+!
+      GOTO 4898
+!
+ 3400 CONTINUE
+!
+! ***** SPECIAL CASE OF ONE SPACE !!!!! ******
+!
+!  LOOP OVER SINGLE ALPHA EXCITES WITHIN EACH SYMMETRY.
+
+       DO 2901 ISAE=1,NSYM
+          KBSYM=KTAB(ISAE)
+          DO 2801 JSAE=1,IMMC(ISAE)
+                JPOSAE=IPOSA(JSAE,ISAE)
+                JPERAE=IPERA(JSAE,ISAE)
+C$$$            JINDAE=IIND1(JSAE,ISAE)
+                JGROAE=IGROA(JSAE,ISAE)
+!
+!  IF ISAE.EQ.JASYM THEN SPECIAL CASE.
+!
+
+       IF (ISAE.EQ.JASYM) THEN
+!
+!  LOOP OVER ALL RELEVANT BETAS
+!
+             LABPOS=JPZA1    !0 ALPHA STRING
+             LABPOS2=JPOSAE  !A->A' STRING
+                DO 2721 KKB=LSBS(KSYM,1),LSBS(KSYM+1,1)-1
+                    LABPOS = LABPOS + 1
+                    LABPOS2 = LABPOS2 + 1
+                    IBPOS =  LSBC(KKB)  !BETA OF CORRECT SYMMETRY
+!
+!  LOOP OVER SINGLE BETA EXCITES FROM IBPOS
+!
+               DO 2621 JBINDX=JB1ST(KSYM,IBPOS),JB1ST(KSYM+1,IBPOS)-1
+                  JCIB = JPOSAE+JB1PO(JBINDX)
+                  JCIB2 = JPZA1+JB1PO(JBINDX)
+                  F_FC = 0.0D+00
+                  F_FC1 = 0.0D+00
+                 DO KKI=1,NXTW
+          F_FC = F_FC + WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+          F_FC1 =F_FC1+ WSTATE(IWTS(KKI))*AB(LABPOS2,KKI)*AB(JCIB2,KKI)
+                 ENDDO
+                  F_FC = F_FC*JPERAE*JB1PE(JBINDX)
+                  F_FC1 = F_FC1*JPERAE*JB1PE(JBINDX)
+
+                  I1_1=IIND1O1(JSAE,ISAE)
+                  I2_1=JB1O1(JBINDX)
+                  I2_2=JB1O2(JBINDX)
+                  I1_2=IIND1O2(JSAE,ISAE)
+
+!A1 B2 -> A'1 B'2  WHERE: A'1 > A1    B'2 > B2
+!                  FDM2(I1_2,I2_2,I2_1,I1_1) = 
+!     $           FDM2(I1_2,I2_2,I2_1,I1_1) + F_FC/2
+c$$$        call buff_load(I1_2,I2_2,I2_1,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_2,I1_1,I2_1) = 
+!     $           FDM2(I2_2,I1_2,I1_1,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_2,I1_1,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_1,I1_2,I2_2) = 
+!     $           FDM2(I2_1,I1_1,I1_2,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_1,I1_2,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_1,I2_2,I1_2) = 
+!     $           FDM2(I1_1,I2_1,I2_2,I1_2) + F_FC/2
+c$$$        call buff_load(I1_1,I2_1,I2_2,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_2,I2_1,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc
+
+!EXCHANGE
+!                  FDM2(I1_2,I2_1,I2_2,I1_1) = 
+!     $           FDM2(I1_2,I2_1,I2_2,I1_1) + F_FC1/2
+c$$$        call buff_load(I1_2,I2_1,I2_2,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+!                  FDM2(I2_1,I1_2,I1_1,I2_2) = 
+!     $           FDM2(I2_1,I1_2,I1_1,I2_2) + F_FC1/2
+c$$$        call buff_load(I2_1,I1_2,I1_1,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+!                  FDM2(I2_2,I1_1,I1_2,I2_1) = 
+!     $           FDM2(I2_2,I1_1,I1_2,I2_1) + F_FC1/2
+c$$$        call buff_load(I2_2,I1_1,I1_2,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+!                  FDM2(I1_1,I2_2,I2_1,I1_2) = 
+!     $           FDM2(I1_1,I2_2,I2_1,I1_2) + F_FC1/2
+c$$$        call buff_load(I1_1,I2_2,I2_1,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc1/2)
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_1,I2_2,I1_1,index,offset)
+        buff(inc_buff) = f_fc1/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc1
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'11'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'11'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!
+ 2621          CONTINUE
+!
+ 2721          CONTINUE
+!
+      ELSE
+!
+!  LOOP OVER ALL RELEVANT (A-)BETA DETS.
+!
+                LABPOS = JPZA1
+                DO 2751 KKB=LSBS(KSYM,1),LSBS(KSYM+1,1)-1
+                    LABPOS = LABPOS + 1
+                    IBPOS =  LSBC(KKB)
+!
+!  LOOP OVER SINGLE BETA EXCITES FROM IBPOS
+!
+               DO 2601 JBINDX=JB1ST(KBSYM,IBPOS),JB1ST(KBSYM+1,IBPOS)-1
+!
+!$$$  <IIND1O1(JSAE,ISAE) JB1O1(JBINDX)|IIND1O2(JSAE,ISAE) JB1O2(JBINDX)>
+
+
+                  JCIB=JPOSAE+JB1PO(JBINDX)
+                  F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC +WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+                 ENDDO
+                  F_FC = F_FC*JPERAE*JB1PE(JBINDX)
+
+                  I1_1=IIND1O1(JSAE,ISAE)
+                  I2_1=JB1O1(JBINDX)
+                  I2_2=JB1O2(JBINDX)
+                  I1_2=IIND1O2(JSAE,ISAE)
+
+!A B A' B'  WHERE: A' > A    B' > B
+!DN,DN->UP,UP
+!                  FDM2(I1_2,I2_2,I2_1,I1_1) = 
+!     $           FDM2(I1_2,I2_2,I2_1,I1_1) + F_FC/2
+c$$$        call buff_load(I1_2,I2_2,I2_1,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_2,I1_1,I2_1) = 
+!     $           FDM2(I2_2,I1_2,I1_1,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_2,I1_1,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_1,I1_2,I2_2) = 
+!     $           FDM2(I2_1,I1_1,I1_2,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_1,I1_2,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_1,I2_2,I1_2) = 
+!     $           FDM2(I1_1,I2_1,I2_2,I1_2) + F_FC/2
+c$$$        call buff_load(I1_1,I2_1,I2_2,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_2,I2_1,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'12'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'12'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!
+ 2601          CONTINUE
+!
+ 2751          CONTINUE
+!
+!  LOOP OVER ALL RELEVANT (A'-)BETA DETS.
+!
+               LABPOS = JPOSAE
+               DO 2761 KKB=LSBS(KBSYM,1),LSBS(KBSYM+1,1)-1
+                  LABPOS = LABPOS + 1
+                  IBPOS = LSBC(KKB)
+!
+!  LOOP OVER SINGLE BETA EXCITES FROM IBPOS
+!
+               DO 2611 JBINDX=JB1ST(KSYM,IBPOS),JB1ST(KSYM+1,IBPOS)-1
+!
+!$$$  <IIND1O1(JSAE,ISAE) JB1O1(JBINDX)|IIND1O2(JSAE,ISAE) JB1O2(JBINDX)>
+
+                  JCIB=JPZA1+JB1PO(JBINDX)
+                  F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+           F_FC = F_FC + WSTATE(IWTS(KKI))*AB(LABPOS,KKI)*AB(JCIB,KKI)
+                 ENDDO
+                  F_FC = F_FC*JPERAE*JB1PE(JBINDX)
+
+                  I1_1=IIND1O1(JSAE,ISAE)
+                  I2_1=JB1O1(JBINDX)
+                  I2_2=JB1O2(JBINDX)
+                  I1_2=IIND1O2(JSAE,ISAE)
+
+!A B A' B'  WHERE: A' > A    B' > B
+!UP,DN->DN,UP
+!                  FDM2(I1_2,I2_1,I2_2,I1_1) = 
+!     $           FDM2(I1_2,I2_1,I2_2,I1_1) + F_FC/2
+c$$$        call buff_load(I1_2,I2_1,I2_2,I1_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_1,I1_2,I1_1,I2_2) = 
+!     $           FDM2(I2_1,I1_2,I1_1,I2_2) + F_FC/2
+c$$$        call buff_load(I2_1,I1_2,I1_1,I2_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I2_2,I1_1,I1_2,I2_1) = 
+!     $           FDM2(I2_2,I1_1,I1_2,I2_1) + F_FC/2
+c$$$        call buff_load(I2_2,I1_1,I1_2,I2_1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                  FDM2(I1_1,I2_2,I2_1,I1_2) = 
+!     $           FDM2(I1_1,I2_2,I2_1,I1_2) + F_FC/2
+c$$$        call buff_load(I1_1,I2_2,I2_1,I1_2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+
+        inc_buff = inc_buff +1
+        ibuff(inc_buff) =
+     $       get_scatter_pos_sym(I1_2,I2_1,I2_2,I1_1,index,offset)
+        buff(inc_buff) = f_fc/2
+        if(I1_2.eq.I2_2.and.I2_1.eq.I1_1)buff(inc_buff) = f_fc
+
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'13'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'13'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+
+!
+ 2611          CONTINUE
+!
+ 2761          CONTINUE
+!
+      ENDIF
+!
+ 2801       CONTINUE
+ 2901   CONTINUE
+!
+!  **** END OF SPECIAL CASE OF ONE SPACE *******
+!
+ 4898       CONTINUE
+
+            IF (GOPARR) CALL DDI_DLBNEXT(MY_TASK)
+ 4899       CONTINUE
+            CALL MOVEUP2(LBOX1,NSPACE,NA,MSTA,IACON1)
+ 4900    CONTINUE
+!
+         CALL PUSHCO(LBOX1,NSPACE,NA,IAMA,IAMI,LBOX5,IEND)
+ 5000 CONTINUE
+!
+!           --- THIS ENDS LOOP OVER ALPHA STRINGS ---
+!          --- NOW LOOP OVER PURE BETA EXCITATIONS ---
+!
+      IF (GOPARR) THEN
+         CALL DDI_DLBRESET()
+         CALL DDI_DLBNEXT(MY_TASK)
+      ENDIF
+!
+      CALL RESETCO(LBOX1,NSPACE,NB,IBMA,IBMI,LBOX5)
+!
+      DO 8000 IGB=1,ITGB
+!
+         CALL RESETDE(LBOX1,NSPACE,NB,MSTA,IBCON1)
+!
+!  KKB GIVES THE ACTUAL POSITION OF THE BETA STRING IBCON1 IN
+!  THE FULL BETA STRING LIST.
+!
+         DO 7900 KKB=NBST(IGB)+1,NBST(IGB+1)
+            IF (GOPARR.AND.KKB-1.NE.MY_TASK) GOTO 7899
+!            if(mod(kkb,nproc).ne.me)goto 7899
+            JPZB1 = LSPB(KKB)
+            KBSYM = LSYMB(KKB)
+            KSYM=KTAB(KBSYM)
+!
+            DO II=1,NSPACE
+               LBOX2(II) = LBOX1(II)
+            ENDDO
+!
+!  LOOP OVER SPACES TO EXCITE ELECTRON FROM.
+!
+            IEBS = NB+1
+            DO 7890 ISPB1=NSPACE,1,-1
+               IOC1 = LBOX1(ISPB1)
+               IEBE = IEBS - 1
+               IEBS = IEBS - IOC1
+               IF (IOC1.EQ.0) GOTO 7890
+               LBOX2(ISPB1) = LBOX2(ISPB1)-1
+!
+!  LOOP ELECTRONS IN SPACE ISPB1.
+!  IEBS, IEBE ARE THE ELECTRONS IN SPACE ISPB1.
+!
+               DO 7885 IB1=IEBE,IEBS,-1
+                  IO1 = IBCON1(IB1)
+                  IGBE = IEBE - LBOX1(ISPB1)
+                  IS1 = IOB(IO1)
+!
+!  LOOP OVER POSSIBLE SPACES TO EXCITE INTO.
+!
+               DO 7880 ISPB2=ISPB1,NSPACE
+!
+!  IGBS, IGBE ARE ELECTRONS SPECIFYING ISPB2 SPACE ELECTRON LIMITS.
+!
+                  IGBS = IGBE + 1
+                  IGBE = IGBE + LBOX1(ISPB2)
+!
+                  LBOX2(ISPB2) = LBOX2(ISPB2) + 1
+                  IF (LBOX2(ISPB1).LT.IBMI(ISPB1)) GOTO 7870
+!
+!  MAKE GAP INFORMATION HERE.
+!
+                  IGBB = MAX(IB1+1,IGBS)
+                  IF (LBOX1(ISPB2).EQ.0) THEN
+                     ISTA = MSTA(ISPB2)
+                     IEND = MSTA(ISPB2+1)-1
+                  ELSEIF (ISPB2.EQ.ISPB1) THEN
+                     ISTA = IO1+1
+                     IEND = IBCON1(IGBB)-1
+                     IF (IB1.EQ.IEBE) IEND=MSTA(ISPB1+1)-1
+                  ELSE
+                     ISTA = MSTA(ISPB2)
+                     IEND = IBCON1(IGBB)-1
+                  ENDIF
+!
+!  LOOP OVER GAPS
+!
+                  DO 7860 IGAP=IGBB,IGBE+1
+!
+                     DO 7850 JJ=ISTA,IEND
+                        IS2 = IOB(JJ)
+                        IP1 = LGMUL(IS1,IS2)
+                        IND = INDEX(JJ) + IO1
+!
+              CALL REDE00(IBCON1,IBCON2,NB,IB1,IGAP-1,JJ,JPERB)
+                  IF (LBOX2(ISPB2).GT.IBMA(ISPB2)) GOTO 7800
+!
+!   IF DEOCCUPIED AND NEWLY OCCUPIED ORBITALS ARE OF DIFFERENT SYMMETRY,
+!   SKIP TO DOUBLES.
+!
+              IF (IS1.NE.IS2) GOTO 7800
+!
+!  GET GROUP NUMBER
+!
+           CALL POSITCO(LBOX5,NSPACE,NB,IBMA,IBMI,LBOX4,LBOX2,IGB2)
+           NIBS = NBST(IGB2)
+!
+              CALL IDPOST(IBCON2,NB,LBOX2,NSPACE,MSTA,IDIM,Y,NX,LBST,
+     *                  LBNDET(1,IGB2),IACON1,JPOSB)
+              KBPOS = JPOSB + NIBS
+              JPZB2 = LSPB(KBPOS)
+              KPER1 = ((-1)**JPERB)*2
+!
+!  LOOP OVER ALPHA AND UPDATE DM2
+!
+              DO 7712 IK=1,NB
+                 IF (IK.EQ.IB1) GOTO 7712
+                 ION = IBCON1(IK)
+!
+c$$$         ibuff(inc_buff+1)= get_scatter_pos(JJ,ION,ION,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+1)= 0.0d+00
+c$$$         ibuff(inc_buff+2)= get_scatter_pos(ION,JJ,IO1,ION,n1,n2,n3)
+c$$$         buff(inc_buff+2)= 0.0d+00
+c$$$         ibuff(inc_buff+3)= get_scatter_pos(JJ,ION,IO1,ION,n1,n2,n3)
+c$$$         buff(inc_buff+3)= 0.0d+00
+c$$$         ibuff(inc_buff+4)= get_scatter_pos(ION,JJ,ION,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+4)= 0.0d+00
+c$$$         ibuff(inc_buff+5)= get_scatter_pos(IO1,ION,ION,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+5)= 0.0d+00
+c$$$         ibuff(inc_buff+6)= get_scatter_pos(ION,IO1,JJ,ION,n1,n2,n3)
+c$$$         buff(inc_buff+6)= 0.0d+00
+c$$$         ibuff(inc_buff+7)= get_scatter_pos(IO1,ION,JJ,ION,n1,n2,n3)
+c$$$         buff(inc_buff+7)= 0.0d+00
+c$$$         ibuff(inc_buff+8)= get_scatter_pos(ION,IO1,ION,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+8)= 0.0d+00
+
+
+
+        ibuff(inc_buff +1) =
+     $       get_scatter_pos_sym(JJ,ION,ION,IO1,index,offset)
+        buff(inc_buff +1) = 0.0d+00
+        ibuff(inc_buff +2) =
+     $       get_scatter_pos_sym(JJ,ION,IO1,ION,index,offset)
+        buff(inc_buff +2) = 0.0d+00
+
+              DO 7710 IGA=1,ITGA
+              IF (LGCOM(IGB,IGA).NE.1.OR.LGCOM(IGB2,IGA).NE.1) GOTO 7710
+                 JCIB1 = LDISB(KBSYM,IGB,IGA) + JPZB1
+                 JCIB2 = LDISB(KBSYM,IGB2,IGA) + JPZB2
+                 NIAS = NAST(IGA)
+!
+              DO 7695 KKA=LSAS(KSYM,IGA),LSAS(KSYM+1,IGA)-1
+                 IENA1 = LSAC(KKA)
+                 JCIA = LSPA(NIAS+IENA1)
+                 JCI1 = JCIA + JCIB1
+                 JCI2 = JCIA + JCIB2
+
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC + WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI2,KKI)
+                 ENDDO
+                 F_FC = F_FC*KPER1
+
+!B,B2,B2,B' WHERE : B' > B 
+!                 FDM2(JJ,ION,ION,IO1) = FDM2(JJ,ION,ION,IO1) + F_FC/2
+c$$$        call buff_load(JJ,ION,ION,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+
+!                 FDM2(ION,JJ,IO1,ION) = FDM2(ION,JJ,IO1,ION) + F_FC/2
+c$$$        call buff_load(ION,JJ,IO1,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +2) = buff(inc_buff +2) + f_fc/2
+
+!                 FDM2(JJ,ION,IO1,ION) = FDM2(JJ,ION,IO1,ION) - F_FC/2
+c$$$        call buff_load(JJ,ION,IO1,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +3) = buff(inc_buff +3) - f_fc/2
+
+!                 FDM2(ION,JJ,ION,IO1) = FDM2(ION,JJ,ION,IO1) - F_FC/2
+c$$$        call buff_load(ION,JJ,ION,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +4) = buff(inc_buff +4) - f_fc/2
+
+!$$$ (DE)EXCITE BELOW
+!                 FDM2(IO1,ION,ION,JJ) = FDM2(IO1,ION,ION,JJ) + F_FC/2
+c$$$        call buff_load(IO1,ION,ION,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +5) = buff(inc_buff +5) + f_fc/2
+
+!                 FDM2(ION,IO1,JJ,ION) = FDM2(ION,IO1,JJ,ION) + F_FC/2
+c$$$        call buff_load(ION,IO1,JJ,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +6) = buff(inc_buff +6) + f_fc/2
+
+!                 FDM2(IO1,ION,JJ,ION) = FDM2(IO1,ION,JJ,ION) - F_FC/2
+c$$$        call buff_load(IO1,ION,JJ,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +7) = buff(inc_buff +7) - f_fc/2
+
+!                 FDM2(ION,IO1,ION,JJ) = FDM2(ION,IO1,ION,JJ) - F_FC/2
+c$$$        call buff_load(ION,IO1,ION,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +8) = buff(inc_buff +8) - f_fc/2
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'14'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+                 buff(inc_buff +2) = buff(inc_buff +2) - f_fc/2
+
+ 7695         CONTINUE
+!
+ 7710         CONTINUE
+!//
+c$$$              inc_buff = inc_buff +8
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'14'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+               inc_buff = inc_buff +2
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'14'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!//
+ 7712         CONTINUE
+!//
+
+!//
+c$$$              do i = 1,nact
+c$$$                 i1_buff(i) = get_scatter_pos(JJ,I,I,IO1,n1,n2,n3)
+c$$$                 d1_buff(i) = 0.0d+00
+c$$$                 i2_buff(i) = get_scatter_pos(I,JJ,IO1,I,n1,n2,n3)
+c$$$!                 d2_buff(i) = 0.0d+00
+c$$$                 i3_buff(i) = get_scatter_pos(IO1,I,I,JJ,n1,n2,n3)
+c$$$!                 d3_buff(i) = 0.0d+00
+c$$$                 i4_buff(i) = get_scatter_pos(I,IO1,JJ,I,n1,n2,n3)
+c$$$!                 d4_buff(i) = 0.0d+00
+c$$$              enddo
+
+      do i = 1,nact
+         il = index(jj) + io1
+         jk = index(i) + i
+         ijkl_mi = min(il,jk)
+         ijkl_ma = max(il,jk)
+         i1_buff(i) = index(ijkl_ma) + ijkl_mi
+         
+         d1_buff(i) = 0.0d+00
+      enddo
+
+!//
+!
+!  LOOP OVER ALPHA STRINGS OF THE RIGHT GROUP AND SYMMETRY.
+!
+              CALL RESETCO(LBOX3,NSPACE,NA,IAMA,IAMI,LBOX4)
+!
+              DO 7700 IGA=1,ITGA
+              IF (LGCOM(IGB,IGA).NE.1.OR.LGCOM(IGB2,IGA).NE.1) GOTO 7690
+                 JCIB1 = LDISB(KBSYM,IGB,IGA) + JPZB1
+                 JCIB2 = LDISB(KBSYM,IGB2,IGA) + JPZB2
+                 NIAS = NAST(IGA)
+!
+              CALL RESETDE(LBOX3,NSPACE,NA,MSTA,IACON1)
+              ISTA1 = 1
+              DO 7680 KKA=LSAS(KSYM,IGA),LSAS(KSYM+1,IGA)-1
+                 IENA1 = LSAC(KKA)
+                 DO IIZ=ISTA1,IENA1-1
+                    CALL MOVEUP2(LBOX3,NSPACE,NA,MSTA,IACON1)
+                 ENDDO
+                 ISTA1 = IENA1
+                 JCIA = LSPA(NIAS+IENA1)
+                 JCI1 = JCIA + JCIB1
+                 JCI2 = JCIA + JCIB2
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC + WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI2,KKI)
+                 ENDDO
+                 F_FC = F_FC*KPER1
+!
+                 DO 7670 IK=1,NA
+                    ION = IACON1(IK)
+
+!$$$ <IO1 ION |JJ ION>
+!B,A,A,B'    WHERE: B' > B
+!                 FDM2(JJ,ION,ION,IO1) = FDM2(JJ,ION,ION,IO1) + F_FC/2
+c$$$        call buff_load(JJ,ION,ION,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+c$$$                    d1_buff(ion) = d1_buff(ion) + f_fc/2
+
+!                 FDM2(ION,JJ,IO1,ION) = FDM2(ION,JJ,IO1,ION) + F_FC/2
+c$$$        call buff_load(ION,JJ,IO1,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                 FDM2(IO1,ION,ION,JJ) = FDM2(IO1,ION,ION,JJ) + F_FC/2
+c$$$        call buff_load(IO1,ION,ION,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+!                 FDM2(ION,IO1,JJ,ION) = FDM2(ION,IO1,JJ,ION) + F_FC/2
+c$$$        call buff_load(ION,IO1,JJ,ION,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'15'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+              d1_buff(ion) = d1_buff(ion) + f_fc/2
+
+ 7670            CONTINUE
+!
+ 7680         CONTINUE
+!
+ 7690         CALL PUSHCO(LBOX3,NSPACE,NA,IAMA,IAMI,LBOX4,IEND)
+ 7700         CONTINUE
+!//
+c$$$              do i = 1,nact
+c$$$                 if(abs(d1_buff(i)).gt.0.0d+00)then
+c$$$                    ibuff(inc_buff +1) = i1_buff(i)
+c$$$                    buff(inc_buff +1) = d1_buff(i)
+c$$$                    ibuff(inc_buff +2) = i2_buff(i)
+c$$$                    buff(inc_buff +2) = d1_buff(i)
+c$$$                    ibuff(inc_buff +3) = i3_buff(i)
+c$$$                    buff(inc_buff +3) = d1_buff(i)
+c$$$                    ibuff(inc_buff +4) = i4_buff(i)
+c$$$                    buff(inc_buff +4) = d1_buff(i)
+c$$$                    inc_buff = inc_buff +4
+c$$$                 endif
+c$$$              enddo
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'15'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+              do i = 1,nact
+                 if(abs(d1_buff(i)).gt.screen_tol)then
+                    inc_buff = inc_buff +1
+                    ibuff(inc_buff ) = i1_buff(i)
+                    buff(inc_buff ) = d1_buff(i)
+                 endif
+              enddo
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'15'
+!                 call flshbf(6)
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!//
+!
+!  --- DOUBLE EXCITATIONS START HERE
+!
+ 7800         CONTINUE
+!
+           IF (IB1.EQ.NB) GOTO 7850
+           IF (JJ.EQ.NACT) GOTO 7850
+!
+            DO II=1,NSPACE
+               LBOX3(II) = LBOX2(II)
+            ENDDO
+            IBES3 = 1
+            DO KK=1,ISPB1-1
+               IBES3 = IBES3 + LBOX2(KK)
+            ENDDO
+!
+!  LOOP OVER SPACES TO EXCITE ELECTRONS FROM, MUST BE GE THAN
+!  SPACE OF FIRST EXCITATION, ISPB1.
+!
+            DO 6890 ISPB3 = ISPB1,NSPACE
+               IF (LBOX1(ISPB3).EQ.0) GOTO 6887
+               IF (ISPB3.EQ.ISPB1.AND.IB1.EQ.IEBE) GOTO 6887
+               IOC3 = LBOX2(ISPB3)
+               IF (IOC3.EQ.0) GOTO 6887
+!
+               IBEE3 = IBES3 + LBOX2(ISPB3)-1
+               LBOX3(ISPB3) = LBOX3(ISPB3)-1
+!
+!  LOOP OVER ELECTRONS IN ISPB3, WHICH ARE LARGER THAN IB1,
+!  MAKING SURE IT ISN'T THE ALREADY EXCITED ELECTRON.
+!
+               JSTB3 = IBES3
+               IF (ISPB3.EQ.ISPB1) THEN
+                  JSTB3=IB1
+                  IF (IGAP-1.EQ.IB1) JSTB3=JSTB3+1
+               ENDIF
+!
+               DO 6880 IB3=JSTB3,IBEE3
+                  IF (IB3.EQ.IGAP-1) GOTO 6880
+                  IO3 = IBCON2(IB3)
+                  IS3 = IOB(IO3)
+!
+!  LOOP OVER SPACES TO EXCITE ELECTRON INTO.  MUST BE GE THAN
+!  SPACE FIRST ELECTRON WAS EXCITED INTO.
+!
+                  IGBE3 = 0
+                  DO JIK=1,ISPB2-1
+                     IGBE3 = IGBE3 + LBOX2(JIK)
+                  ENDDO
+                  DO 6850 ISPB4=ISPB2,NSPACE
+!
+!  IGBS3, IGBE3 ARE ELECTRONS SPECIFYING ISPB4 SPACE ELECTRON LIMITS.
+!
+                  LBOX3(ISPB4) = LBOX3(ISPB4) + 1
+                  IGBS3 = IGBE3 + 1
+                  IGBE3 = IGBE3 + LBOX2(ISPB4)
+                  IF (LBOX3(ISPB3).LT.IBMI(ISPB3)) GOTO 6840
+                  IF (LBOX3(ISPB4).GT.IBMA(ISPB4)) GOTO 6840
+                  IF (LBOX3(ISPB2).LT.IBMI(ISPB2)) GOTO 6840
+                  IF (LBOX3(ISPB2).GT.IBMA(ISPB2)) GOTO 6840
+!
+             IF (ISPB4.EQ.ISPB2.AND.JJ.EQ.MSTA(ISPB2+1)-1) GOTO 6840
+!
+!  GET GROUP NUMBER
+!
+               CALL POSITCO(LBOX5,NSPACE,NB,IBMA,IBMI,LBOX4,LBOX3,IGB3)
+               NIBS3 = NBST(IGB3)
+!
+!  MAKE GAP INFORMATION HERE.
+!
+                  IGBB3 = MAX(IGBS3,IGAP)
+!
+                  IF (LBOX2(ISPB4).EQ.0) THEN
+                     ISTA3 = MSTA(ISPB4)
+                     IEND3 = MSTA(ISPB4+1)-1
+                  ELSEIF (ISPB4.EQ.ISPB2) THEN
+                     ISTA3 = JJ+1
+                     IEND3 = IBCON2(IGBB3)-1
+!
+!  I AM SUSPECT ABOUT THIS NEXT LINE, WE'LL SEE WHAT HAPPENS.......
+!
+                     IF (IGAP-1.EQ.IGBE3) IEND3=MSTA(ISPB2+1)-1
+!
+                  ELSE
+                     ISTA3 = MSTA(ISPB4)
+                     IEND3 = IBCON2(IGBB3)-1
+                  ENDIF
+!
+!  LOOP OVER GAPS
+!
+                  DO 6830 IGAP3=IGBB3,IGBE3+1
+!
+                     DO 6820 JJ3=ISTA3,IEND3
+                        IS4 = IOB(JJ3)
+                        IP2 = LGMUL(IS3,IS4)
+                        IF (IP1.NE.IP2) GOTO 6820
+!
+              CALL REDE00(IBCON2,IACON1,NB,IB3,IGAP3-1,JJ3,JPERB3)
+              CALL IDPOST(IACON1,NB,LBOX3,NSPACE,MSTA,IDIM,Y,NX,LBST,
+     *                  LBNDET(1,IGB3),IACON2,JPOSB3)
+              IPER3 = ((-1)**(JPERB3+JPERB))*2
+              KBPOS3 = JPOSB3 + NIBS3
+              JPZB3 = LSPB(KBPOS3)
+!
+c$$$         ibuff(inc_buff+1)= get_scatter_pos(JJ,JJ3,IO3,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+1)= 0.0d+00
+c$$$         ibuff(inc_buff+2)= get_scatter_pos(JJ3,JJ,IO1,IO3,n1,n2,n3)
+c$$$         buff(inc_buff+2)= 0.0d+00
+c$$$         ibuff(inc_buff+3)= get_scatter_pos(JJ,JJ3,IO1,IO3,n1,n2,n3)
+c$$$         buff(inc_buff+3)= 0.0d+00
+c$$$         ibuff(inc_buff+4)= get_scatter_pos(JJ3,JJ,IO3,IO1,n1,n2,n3)
+c$$$         buff(inc_buff+4)= 0.0d+00
+c$$$         ibuff(inc_buff+5)= get_scatter_pos(IO1,IO3,JJ3,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+5)= 0.0d+00
+c$$$         ibuff(inc_buff+6)= get_scatter_pos(IO3,IO1,JJ,JJ3,n1,n2,n3)
+c$$$         buff(inc_buff+6)= 0.0d+00
+c$$$         ibuff(inc_buff+7)= get_scatter_pos(IO1,IO3,JJ,JJ3,n1,n2,n3)
+c$$$         buff(inc_buff+7)= 0.0d+00
+c$$$         ibuff(inc_buff+8)= get_scatter_pos(IO3,IO1,JJ3,JJ,n1,n2,n3)
+c$$$         buff(inc_buff+8)= 0.0d+00
+
+
+        ibuff(inc_buff +1) =
+     $       get_scatter_pos_sym(JJ,JJ3,IO3,IO1,index,offset)
+        buff(inc_buff +1) = 0.0d+00
+
+        ibuff(inc_buff +2) =
+     $       get_scatter_pos_sym(JJ,JJ3,IO1,IO3,index,offset)
+        buff(inc_buff +2) = 0.0d+00
+
+!
+!  LOOP OVER ALPHA STRINGS OF RIGHT SYMMETRY AND GROUP.
+!
+              DO 6700 IGA=1,ITGA
+              IF (LGCOM(IGB,IGA).NE.1.OR.LGCOM(IGB3,IGA).NE.1) GOTO 6700
+              JCIB1 = JPZB1 + LDISB(KBSYM,IGB,IGA)
+              JCIB3 = JPZB3 + LDISB(KBSYM,IGB3,IGA)
+              NIAS = NAST(IGA)
+!
+              DO 6680 KKA=LSAS(KSYM,IGA),LSAS(KSYM+1,IGA)-1
+                 IENA3 = LSAC(KKA)
+                 JCIA = LSPA(NIAS+IENA3)
+                 JCI1 = JCIA + JCIB1
+                 JCI3 = JCIA + JCIB3
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC + WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI3,KKI)
+                 ENDDO
+                 F_FC = F_FC*IPER3
+
+!B B2 -> B'2 B' WHERE: B'2 > B2  B' > B     B2 > B     B'2 > B2' 
+!                 FDM2(JJ,JJ3,IO3,IO1) = FDM2(JJ,JJ3,IO3,IO1) + F_FC/2
+c$$$        call buff_load(JJ,JJ3,IO3,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+
+!                 FDM2(JJ3,JJ,IO1,IO3) = FDM2(JJ3,JJ,IO1,IO3) + F_FC/2
+c$$$        call buff_load(JJ3,JJ,IO1,IO3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +2) = buff(inc_buff +2) + f_fc/2
+
+!                 FDM2(JJ,JJ3,IO1,IO3) = FDM2(JJ,JJ3,IO1,IO3) - F_FC/2
+c$$$        call buff_load(JJ,JJ3,IO1,IO3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +3) = buff(inc_buff +3) - f_fc/2
+
+!                 FDM2(JJ3,JJ,IO3,IO1) = FDM2(JJ3,JJ,IO3,IO1) - F_FC/2
+c$$$        call buff_load(JJ3,JJ,IO3,IO1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +4) = buff(inc_buff +4) - f_fc/2
+
+!$$$!----(DE)EXCITE BELOW
+!                 FDM2(IO1,IO3,JJ3,JJ) = FDM2(IO1,IO3,JJ3,JJ) + F_FC/2
+c$$$        call buff_load(IO1,IO3,JJ3,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +5) = buff(inc_buff +5) + f_fc/2
+
+!                 FDM2(IO3,IO1,JJ,JJ3) = FDM2(IO3,IO1,JJ,JJ3) + F_FC/2
+c$$$        call buff_load(IO3,IO1,JJ,JJ3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc/2)
+c$$$                 buff(inc_buff +6) = buff(inc_buff +6) + f_fc/2
+
+!                 FDM2(IO1,IO3,JJ,JJ3) = FDM2(IO1,IO3,JJ,JJ3) - F_FC/2
+c$$$        call buff_load(IO1,IO3,JJ,JJ3,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +7) = buff(inc_buff +7) - f_fc/2
+
+!                 FDM2(IO3,IO1,JJ3,JJ) = FDM2(IO3,IO1,JJ3,JJ) - F_FC/2
+c$$$        call buff_load(IO3,IO1,JJ3,JJ,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc/2)
+c$$$                 buff(inc_buff +8) = buff(inc_buff +8) - f_fc/2
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'16'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc/2
+                 buff(inc_buff +2) = buff(inc_buff +2) - f_fc/2
+
+ 6680         CONTINUE
+!
+ 6700         CONTINUE
+!//
+c$$$              inc_buff = inc_buff +8
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'16'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+               inc_buff = inc_buff +2
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'16'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+!//
+ 6820                CONTINUE
+!
+                     ISTA3 = IBCON2(IGAP3)+1
+                     IEND3 = IBCON2(IGAP3+1)-1
+                     IF (IGAP3.EQ.IGBE3) IEND3=MSTA(ISPB4+1)-1
+ 6830             CONTINUE
+!
+ 6840             LBOX3(ISPB4) = LBOX3(ISPB4) - 1
+ 6850             CONTINUE
+!
+ 6880          CONTINUE
+!
+               LBOX3(ISPB3) = LBOX3(ISPB3)+1
+ 6887          IBES3 = IBES3 + LBOX3(ISPB3)
+ 6890       CONTINUE
+!
+!  --- END OF LOOP OVER DOUBLE BETA EXCITATIONS.
+!
+ 7850                CONTINUE
+!
+                  ISTA = IBCON1(IGAP)+1
+                  IEND = IBCON1(IGAP+1)-1
+                  IF (IGAP.EQ.IGBE) IEND=MSTA(ISPB2+1)-1
+ 7860             CONTINUE
+!
+ 7870             LBOX2(ISPB2) = LBOX2(ISPB2) - 1
+ 7880          CONTINUE
+!
+ 7885          CONTINUE
+!
+               LBOX2(ISPB1) = LBOX2(ISPB1)+1
+ 7890       CONTINUE
+!
+! REMAINING DIAGONAL CONTRIBUTIONS HERE
+!
+            DO 69 II=1,NB
+               I1 = IBCON1(II)
+!
+              DO 74 JJ=II+1,NB
+                 I2 = IBCON1(JJ)
+
+!$$$ <I2 I1 |I1 I2>
+!$$$ <I1 I2 |I1 I2>
+!
+c$$$         ibuff(inc_buff+1)= get_scatter_pos(I1,I2,I2,I1,n1,n2,n3)
+c$$$         buff(inc_buff+1)= 0.0d+00
+c$$$         ibuff(inc_buff+2)= get_scatter_pos(I1,I2,I1,I2,n1,n2,n3)
+c$$$         buff(inc_buff+2)= 0.0d+00
+c$$$         ibuff(inc_buff+3)= get_scatter_pos(I2,I1,I1,I2,n1,n2,n3)
+c$$$         buff(inc_buff+3)= 0.0d+00
+c$$$         ibuff(inc_buff+4)= get_scatter_pos(I2,I1,I2,I1,n1,n2,n3)
+c$$$         buff(inc_buff+4)= 0.0d+00
+
+        ibuff(inc_buff +1) =
+     $       get_scatter_pos_sym(I1,I2,I2,I1,index,offset)
+        buff(inc_buff +1) = 0.0d+00
+
+        ibuff(inc_buff +2) =
+     $       get_scatter_pos_sym(I1,I2,I1,I2,index,offset)
+        buff(inc_buff +2) = 0.0d+00
+
+
+              DO 6710 IGA=1,ITGA
+              IF (LGCOM(IGB,IGA).NE.1) GOTO 6710
+              JCIB1 = JPZB1 + LDISB(KBSYM,IGB,IGA)
+              NIAS = NAST(IGA)
+!
+              DO 6690 KKA=LSAS(KSYM,IGA),LSAS(KSYM+1,IGA)-1
+                 IENA3 = LSAC(KKA)
+                 JCIA = LSPA(NIAS+IENA3)
+                 JCI1 = JCIA + JCIB1
+                 F_FC = 0.0D+00
+                 DO KKI=1,NXTW
+              F_FC = F_FC + WSTATE(IWTS(KKI))*AB(JCI1,KKI)*AB(JCI1,KKI)
+                 ENDDO
+
+!B1 B'2 -> B'2 B1   WHERE: B'2 > B1
+!                 FDM2(I1,I2,I2,I1) = FDM2(I1,I2,I2,I1) + F_FC
+c$$$        call buff_load(I1,I2,I2,I1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc)
+c$$$                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc
+
+!                 FDM2(I1,I2,I1,I2) = FDM2(I1,I2,I1,I2) - F_FC
+c$$$        call buff_load(I1,I2,I1,I2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc)
+c$$$                 buff(inc_buff +2) = buff(inc_buff +2) - f_fc
+
+!                 FDM2(I2,I1,I1,I2) = FDM2(I2,I1,I1,I2) + F_FC
+c$$$        call buff_load(I2,I1,I1,I2,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                f_fc)
+c$$$                 buff(inc_buff +3) = buff(inc_buff +3) + f_fc
+
+!                 FDM2(I2,I1,I2,I1) = FDM2(I2,I1,I2,I1) - F_FC
+c$$$        call buff_load(I2,I1,I2,I1,n1,n2,n3,buff,ibuff,inc_buff,
+c$$$     $                -f_fc)
+c$$$                 buff(inc_buff +4) = buff(inc_buff +4) - f_fc
+
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'17'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+                 buff(inc_buff +1) = buff(inc_buff +1) + f_fc
+                 buff(inc_buff +2) = buff(inc_buff +2) - f_fc
+
+ 6690         CONTINUE
+!
+ 6710         CONTINUE
+!//
+c$$$              inc_buff = inc_buff + 4
+c$$$              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+c$$$!                 write(6,*)'17'
+c$$$                  call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$                  inc_buff = 0
+c$$$               endif
+
+
+               inc_buff = inc_buff +2
+              if(inc_buff.gt.(buffer_size-ibuff_pad))then
+!                 write(6,*)'17'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                 inc_buff = 0
+               endif
+
+
+!//
+   74         CONTINUE
+!
+   69         CONTINUE
+!
+            IF (GOPARR) CALL DDI_DLBNEXT(MY_TASK)
+ 7899       CONTINUE
+            CALL MOVEUP2(LBOX1,NSPACE,NB,MSTA,IBCON1)
+ 7900    CONTINUE
+!
+         CALL PUSHCO(LBOX1,NSPACE,NB,IBMA,IBMI,LBOX5,IEND)
+ 8000 CONTINUE
+!
+c$$$      if(inc_buff.gt.0)then
+c$$$!         write(6,*)'18',inc_buff
+c$$$         call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+c$$$         inc_buff = 0
+c$$$      endif
+
+
+              if(inc_buff.gt.0)then
+!                 write(6,*)'18'
+!                 call flshbf(6)
+c$$$                 do i = 1,inc_buff
+c$$$                    c_dm2(ibuff(i)) = c_dm2(ibuff(i)) + buff(i)
+c$$$                 enddo
+               call ddi_scatter_acc(d_2pdm,inc_buff,ibuff,buff)
+                  inc_buff = 0
+               endif
+
+
+      IF (GOPARR) THEN
+         CALL DDI_DLBRESET()
+      ENDIF
+!
+      IF(SOME) WRITE(IW,9390)
+
+
+      IF(SOME) CALL TIMIT(1)
+      IF(SOME)CALL FLSHBF(6)
+!
+      CALL R12_F_NAME('R12INP',FILENM2)
+!
+      NULL = CHAR(0)
+      DO 101 KOL=1,256
+         IF(FILENM2(KOL:KOL).EQ.' '  .OR.
+     *      FILENM2(KOL:KOL).EQ.NULL) GO TO 102
+  101 CONTINUE
+      KOL=257
+  102 CONTINUE
+      KOL=KOL-1
+!
+! WRITE THE 2PDM TO DISK FILE 'PT2RDM'
+      DSKSAV=DSKWRK
+      DSKWRK=.FALSE.
+      IF(MASWRK)THEN
+      OPEN(UNIT=99,FILE=FILENM2(1:KOL)//'.input.pt2r12.rdm2.dat',
+     $        STATUS='UNKNOWN')
+      OPEN(UNIT=98,FILE=FILENM2(1:KOL)//'.input.pt2r12.rdm1.dat',
+     $        STATUS='UNKNOWN')
+
+      ilo(1) = 1
+      ihi(1) = 1+ buffer_size -1
+      if(ihi(1).gt.offset)ihi(1) = offset
+      call ddi_get(d_2pdm,1,1,ilo(1),ihi(1),buff)
+      icount = 0
+C$$$      energy = 0.0d+00
+
+      do i = 1,nact
+         do l = 1,i
+           
+            do j = 1,i
+               kmax = j
+               if(i.eq.j)kmax = l
+               do k = 1,kmax
+                  
+                  icount = icount +1
+
+                  if(icount.gt.ihi(1))then
+                     ilo(1) = icount
+                     ihi(1) = icount + buffer_size -1
+                     if(ihi(1).gt.offset)ihi(1) = offset
+                     call ddi_get(d_2pdm,1,1,ilo(1),ihi(1),buff)
+                  endif
+
+                  if(abs(buff(icount-ilo(1)+1)).lt.rdm2tol)cycle                
+
+C$$$                  dscal = 4.0d+00
+                  i_dtype = 4
+
+C$$$                  if(i.eq.j.and.k.eq.l)dscal = 2.0d+00
+                  if(i.eq.j.and.k.eq.l)i_dtype = 3
+
+!                  if(i.eq.k.and.j.eq.l)dscal = 2.0d+00
+C$$$                  if(i.eq.l.and.j.eq.k)dscal = 2.0d+00
+                  if(i.eq.l.and.j.eq.k)i_dtype = 2
+
+C$$$                  if(i.eq.l.and.j.eq.k.and.i.eq.j)dscal = 1.0d+00
+                  if(i.eq.l.and.j.eq.k.and.i.eq.j)i_dtype = 1
+
+C$$$                  imi = min(i,l)
+C$$$                  ima = max(i,l)
+C$$$                  i2 = index(ima) + imi
+C$$$                  jmi = min(j,k)
+C$$$                  jma = max(j,k)
+C$$$                  j2 = index(jma) + jmi
+                  
+C$$$                  kmi = min(i2,j2)
+C$$$                  kma = max(i2,j2)
+C$$$                  int = index(kma) + kmi
+C$$$                 energy = energy + si2(int)*buff(icount -ilo(1)+1)*dscal
+
+c$$$      if(i_dtype.eq.4)then
+c$$$         WRITE(99,'(4I8,F22.16)')i,j,l,k,c_dm2(int)
+c$$$         WRITE(99,'(4I8,F22.16)')j,i,k,l,c_dm2(int)
+c$$$         WRITE(99,'(4I8,F22.16)')l,k,i,j,c_dm2(int)
+c$$$         WRITE(99,'(4I8,F22.16)')k,l,j,i,c_dm2(int)
+c$$$
+c$$$      elseif(i_dtype.eq.3)then
+c$$$         WRITE(99,'(4I8,F22.16)')i,j,l,k,c_dm2(int)
+c$$$         WRITE(99,'(4I8,F22.16)')l,k,j,i,c_dm2(int)
+c$$$
+c$$$      elseif(i_dtype.eq.2)then
+c$$$         WRITE(99,'(4I8,F22.16)')i,j,l,k,c_dm2(int)
+c$$$         WRITE(99,'(4I8,F22.16)')j,i,k,l,c_dm2(int)
+c$$$
+c$$$      else
+c$$$         WRITE(99,'(4I8,F22.16)')i,j,l,k,c_dm2(int)
+c$$$
+c$$$      endif
+
+      if(i_dtype.eq.4)then
+         WRITE(99,'(4I8,F22.16)')i,j,l,k,buff(icount -ilo(1)+1)
+!         WRITE(99,'(4I8,F22.16)')j,i,k,l,buff(icount -ilo(1)+1)
+   !      WRITE(99,'(4I8,F22.16)')l,k,i,j,buff(icount -ilo(1)+1)
+!         WRITE(99,'(4I8,F22.16)')k,l,j,i,buff(icount -ilo(1)+1)
+
+      elseif(i_dtype.eq.3)then
+         WRITE(99,'(4I8,F22.16)')i,j,l,k,buff(icount -ilo(1)+1)
+  !       WRITE(99,'(4I8,F22.16)')l,k,j,i,buff(icount -ilo(1)+1)
+
+      elseif(i_dtype.eq.2)then
+         WRITE(99,'(4I8,F22.16)')i,j,l,k,buff(icount -ilo(1)+1)
+!         WRITE(99,'(4I8,F22.16)')j,i,k,l,buff(icount -ilo(1)+1)
+
+      else
+         WRITE(99,'(4I8,F22.16)')i,j,l,k,buff(icount -ilo(1)+1)
+
+      endif
+
+                  enddo
+               enddo
+               enddo
+            enddo
+
+
+      ilo(1) = offset +1
+      ihi(1) = offset +1 + buffer_size -1
+      if(ihi(1).gt.offset +m5)ihi(1) = offset +m5
+      call ddi_get(d_2pdm,1,1,ilo(1),ihi(1),buff)
+      icount = offset
+
+      do i = 1,nact
+         do l = 1,i-1
+
+            do k = 1,i
+               jmax = k-1
+               if(i.eq.k)jmax = l
+               do j = 1,jmax
+
+
+                  icount = icount +1
+
+
+                  if(icount.gt.ihi(1))then
+                     ilo(1) = icount
+                     ihi(1) = icount + buffer_size -1
+                     if(ihi(1).gt.offset +m5)ihi(1) = offset +m5
+                     call ddi_get(d_2pdm,1,1,ilo(1),ihi(1),buff)
+                  endif
+
+                  if(abs(buff(icount-ilo(1)+1)).lt.rdm2tol)cycle                
+
+C$$$                  dscal = 4.0d+00
+                  i_dtype = 4
+!                  if(i.eq.j.and.k.eq.l)dscal = 2.0d+00
+
+C$$$                  if(i.eq.k.and.j.eq.l)dscal = 2.0d+00
+                  if(i.eq.k.and.j.eq.l)i_dtype = 2
+
+!                  if(i.eq.l.and.j.eq.k)dscal = 2.0d+00
+!                  if(j.eq.i.and.k.eq.l.and.j.eq.k)dscal = 1.0d+00
+
+C$$$                  imi = min(i,l)
+C$$$                  ima = max(i,l)
+C$$$                  i2 = index(ima) + imi
+
+C$$$                  i3 = index(ima-1) + imi
+                  
+C$$$                  jmi = min(j,k)
+C$$$                  jma = max(j,k)
+C$$$                  j2 = index(jma) + jmi
+                  
+C$$$                  j3 = index(jma-1) + jmi  
+                  
+C$$$                  kmi = min(i2,j2)
+C$$$                  kma = max(i2,j2)
+C$$$                  int = index(kma) + kmi
+
+C$$$                  kmi = min(i3,j3)
+C$$$                  kma = max(i3,j3)
+C$$$                  int3 = index(kma) + kmi
+
+C$$$                 energy = energy + si2(int)*buff(icount -ilo(1)+1)*dscal
+
+
+
+c$$$      if(i_dtype.eq.4)then
+c$$$         WRITE(99,'(4I8,F22.16)')i,j,l,k,c_dm2(offset+int3)
+c$$$         WRITE(99,'(4I8,F22.16)')j,i,k,l,c_dm2(offset+int3)
+c$$$         WRITE(99,'(4I8,F22.16)')l,k,i,j,c_dm2(offset+int3)
+c$$$         WRITE(99,'(4I8,F22.16)')k,l,j,i,c_dm2(offset+int3)
+c$$$
+c$$$      elseif(i_dtype.eq.2)then
+c$$$         WRITE(99,'(4I8,F22.16)')i,j,l,k,c_dm2(offset+int3)
+c$$$         WRITE(99,'(4I8,F22.16)')j,i,k,l,c_dm2(offset+int3)
+c$$$
+c$$$      endif
+
+
+      if(i_dtype.eq.4)then
+         WRITE(99,'(4I8,F22.16)')i,j,l,k,buff(icount -ilo(1)+1)
+!         WRITE(99,'(4I8,F22.16)')j,i,k,l,buff(icount -ilo(1)+1)
+  !       WRITE(99,'(4I8,F22.16)')l,k,i,j,buff(icount -ilo(1)+1)
+!         WRITE(99,'(4I8,F22.16)')k,l,j,i,buff(icount -ilo(1)+1)
+
+      elseif(i_dtype.eq.2)then
+         WRITE(99,'(4I8,F22.16)')i,j,l,k,buff(icount -ilo(1)+1)
+!         WRITE(99,'(4I8,F22.16)')j,i,k,l,buff(icount -ilo(1)+1)
+
+      endif
+
+
+                  enddo
+               enddo
+               enddo
+            enddo
+
+
+
+
+!here the 1-RDM is reconstructed from the 2-RDM
+
+      ilo(1) = 1
+      ihi(1) = 1+ buffer_size -1
+      if(ihi(1).gt.offset)ihi(1) = offset
+      call ddi_get(d_2pdm,1,1,ilo(1),ihi(1),buff)
+      icount = 0
+
+
+      do i = 1,nact+ncore
+         do j = 1,nact+ncore
+            rdm1(i,j) = 0.0d+00
+         enddo
+      enddo
+
+      do i = 1,ncore
+            rdm1(i,i) = 2.0d+00
+      enddo
+
+
+      do i = 1,nact
+         do l = 1,i
+           
+            do j = 1,i
+               kmax = j
+               if(i.eq.j)kmax = l
+               do k = 1,kmax
+                  
+                  icount = icount +1
+
+                  if(icount.gt.ihi(1))then
+                     ilo(1) = icount
+                     ihi(1) = icount + buffer_size -1
+                     if(ihi(1).gt.offset)ihi(1) = offset
+                     call ddi_get(d_2pdm,1,1,ilo(1),ihi(1),buff)
+                  endif
+
+                  if(abs(buff(icount-ilo(1)+1)).lt.rdm2tol)cycle                
+                  
+                  value = buff(icount -ilo(1)+1)/(na+nb-1)
+                  ic = i + ncore
+                  jc = j + ncore
+                  kc = k + ncore
+                  lc = l + ncore
+                  if(j.eq.k)then
+         
+                     if(i.eq.l)then
+                        rdm1(ic,lc) = rdm1(ic,lc) + value
+                        if(i.ne.j)rdm1(jc,kc)=rdm1(jc,kc) + value
+                     else       !if(i.eq.l)then
+                        rdm1(ic,lc) = rdm1(ic,lc) + value
+                        rdm1(lc,ic) = rdm1(lc,ic) + value
+                     endif      !if(i.eq.l)then
+                     
+                  elseif(i.eq.l)then
+                     
+                     rdm1(jc,kc) = rdm1(jc,kc) + value
+                     rdm1(kc,jc) = rdm1(kc,jc) + value
+                     
+                  endif         !if(j.eq.k)then
+
+               enddo
+            enddo
+         enddo
+      enddo
+
+! used to recompute 1-partilce energy energy
+C$$$      one_energy = 0.0d+00
+C$$$      do i = 1,nact+ncore
+C$$$         do j = 1,nact+ncore
+C$$$            imi = min(i,j)
+C$$$            ima = max(i,j)
+C$$$            i2 = index(ima) + imi
+C$$$            one_energy = one_energy + si1(i2)*rdm1(i,j)
+C$$$         enddo
+C$$$      enddo
+
+C$$$      write(6,9400)one_energy,energy/2
+      
+
+      do i = 1,nact+ncore
+         do j = 1,nact+ncore
+            write(98,'(2I8,F22.16)')i,j,rdm1(i,j)
+         enddo
+      enddo
+
+      WRITE(98,'(2I8,F22.16)')-1,-1,-1.0D+00
+      rewind(98)
+      WRITE(99,'(4I8,F22.16)')-1,-1,-1,-1,-1.0D+00
+      REWIND(99)
+      CLOSE(UNIT=98,STATUS='KEEP')
+      CLOSE(UNIT=99,STATUS='KEEP')
+      IF(SOME) WRITE(IW,9395)
+      IF(SOME) CALL TIMIT(1)
+      IF(SOME)CALL FLSHBF(6)
+
+
+      endif !(maswrk)
+!//
+      DSKWRK=DSKSAV
+!//
+!// destroy 2pdm distributed array
+         call ddi_destroy(d_2pdm)
+
+!//
+      RETURN
+!//
+ 9340 FORMAT(1X,'STATE=',I4,'   ENERGY=',F20.10,'   WEIGHT=',F8.5,
+     *           '   S=',F6.2/)
+ 9350 FORMAT(/1X,'***** ERROR *****'/
+     *       1X,'THIS RUN FOUND',I5,' CI EIGENVECTORS WITH S=',F5.2,','/
+     *       1X,'BUT YOU REQUESTED STATE AVERAGING OF',I5,' ROOTS.'/
+     *       1X,'PLEASE EXAMINE YOUR CHOICE OF -NSTATE- INPUT DATA.'/)
+ 9390 FORMAT(10X,'...DONE WITH 2 PARTICLE SPIN-FREE DENSITY MATRIX...'/)
+ 9395 FORMAT(/3X,'...FINISHED WRITING 2 PARTICLE SPIN-FREE ',
+     $      'DENSITY MATRIX TO DISK...'/)
+C$$$ 9400 FORMAT(/3X,'FROM SANITY CHECK:',/
+C$$$     $        'ONE PARTICLE ENERGY:',F20.10/
+C$$$     $        'TWO PARTICLE ENERGY:',F20.10/)
+
+!
+      END
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------
+c$$$!*MODULE EXCORR  *BUFF_LOAD
+c$$$c> @brief      this routine loads the buffer
+c$$$c> 
+c$$$c> @author     luke roskop
+c$$$c>             -2013
+c$$$c> 
+c$$$c> @details    this routine loads the buffer (both real and integer).
+c$$$c> 
+c$$$c> @param i orbital index
+c$$$c> @param j orbital index
+c$$$c> @param k orbital index
+c$$$c> @param l orbital index
+c$$$c> @param n1 nact
+c$$$c> @param n2 nact**2
+c$$$c> @param n3 nact**3
+c$$$c> @param buff real buffer
+c$$$c> @param ibuff coordinates of buffer
+c$$$c> @param inc_buff total number of elements to accumulate
+c$$$c> @param element elements to load into real buffer
+c$$$      subroutine buff_load(i,j,k,l,n1,n2,n3,buff,ibuff,inc_buff,element)
+c$$$      implicit none
+c$$$!//passed in variables/arrays
+c$$$      integer i,j,k,l,n1,n2,n3,ibuff(*),inc_buff
+c$$$      double precision buff(*),element
+c$$$!//local varibles
+c$$$      integer ipos
+c$$$
+c$$$!// increment buff
+c$$$      inc_buff = inc_buff +1
+c$$$
+c$$$!// determine position -1
+c$$$      ipos = i-1 + (j-1)*n1 + (k-1)*n2 + (l-1)*n3
+c$$$
+c$$$!// set element in buffer
+c$$$      buff(inc_buff) = element
+c$$$
+c$$$!// record position of element      
+c$$$      ibuff(inc_buff) = ipos +1
+c$$$
+c$$$      return
+c$$$      end subroutine buff_load
+c$$$!------------------------------------------------------------------------
+c$$$!========================================================================
+c$$$!------------------------------------------------------------------------
+c$$$!*MODULE EXCORR  *GET_SCATTER_POS_SYM
+c$$$c> @brief      this routine computes the coordinate of a dm2 element
+c$$$c> 
+c$$$c> @author     luke roskop
+c$$$c>             -2013
+c$$$c> 
+c$$$c> @details    this routine computes the coordinate of a dm2 element
+c$$$c>              in the hypercube.
+c$$$c> 
+c$$$c> @param i orbital index
+c$$$c> @param j orbital index
+c$$$c> @param k orbital index
+c$$$c> @param l orbital index
+c$$$c> @param n1 nact
+c$$$c> @param n2 nact**2
+c$$$c> @param n3 nact**3
+c$$$      integer function get_scatter_pos(i,j,k,l,n1,n2,n3)
+c$$$      implicit none
+c$$$      integer i,j,k,l,n1,n2,n3
+c$$$
+c$$$!//      ipos = i-1 + (j-1)*n1 + (k-1)*n2 + (l-1)*n3
+c$$$!//      get_scatter_pos = ipos +1
+c$$$      get_scatter_pos = i + (j-1)*n1 + (k-1)*n2 + (l-1)*n3
+c$$$
+c$$$
+c$$$      return
+c$$$      end function get_scatter_pos
+c$$$!------------------------------------------------------------------------
+c$$$!========================================================================
+c$$$!------------------------------------------------------------------------
+!*MODULE EXCORR  *GET_SCATTER_POS_SYM
+c> @brief      this routine computes the coordinate of a dm2 element
+c> 
+c> @author     luke roskop
+c>             -2013
+c> 
+c> @details    this routine computes the coordinate of a dm2 element
+c>              in the hypercube.
+c> 
+c> @param i orbital index
+c> @param j orbital index
+c> @param k orbital index
+c> @param l orbital index
+      integer function get_scatter_pos_sym(i,j,k,l,index,offset)
+      implicit none
+      integer i,j,k,l,index(*),offset
+      integer il,jk,li,kj,ijkl_mi,ijkl_ma,lkji_mi,lkji_ma
+!//      ipos = i-1 + (j-1)*n1 + (k-1)*n2 + (l-1)*n3
+!//      get_scatter_pos = ipos +1
+!//      get_scatter_pos = i + (j-1)*n1 + (k-1)*n2 + (l-1)*n3
+
+!      get_scatter_pos_sym = i + (j-1)*n1 + (k-1)*n2 + (l-1)*n3
+
+!      write(6,'(4i4)')i,j,k,l
+!      return
+      if(i.ge.l)then
+
+
+
+         if(j.ge.k)then
+            il = index(i) + l
+            jk = index(j) + k
+            ijkl_mi = min(il,jk)
+            ijkl_ma = max(il,jk)
+            get_scatter_pos_sym = index(ijkl_ma) + ijkl_mi
+!         write(6,'(a5,4i8)')'part1',get_scatter_pos_sym,index(ijkl_ma),
+!     $           ijkl_ma
+         else                   !(k.gt.j)
+!offset
+            il = index(i-1) + l
+            jk = index(k-1) + j
+            ijkl_mi = min(il,jk)
+            ijkl_ma = max(il,jk)
+            get_scatter_pos_sym = index(ijkl_ma) + ijkl_mi + offset
+!         write(6,'(a5,4i20)')'part2',get_scatter_pos_sym,offset
+         endif
+
+
+      else !(l.gt.i)
+
+
+         if(k.ge.j)then
+            li = index(l) + i
+            kj = index(k) + j 
+            lkji_mi = min(li,kj)
+            lkji_ma = max(li,kj)
+            get_scatter_pos_sym = index(lkji_ma) + lkji_mi            
+!         write(6,'(a5,4i4)')'part3',get_scatter_pos_sym
+         else                   !(k.gt.kj)
+            li = index(l-1) + i
+            kj = index(j-1) + k 
+            lkji_mi = min(li,kj)
+            lkji_ma = max(li,kj)
+            get_scatter_pos_sym = index(lkji_ma) + lkji_mi + offset
+!         write(6,'(a5,i6)')'part4',get_scatter_pos_sym
+         endif
+
+
+      endif
+
+!      write(6,*)
+
+      return
+      end function get_scatter_pos_sym
+!------------------------------------------------------------------------
+!========================================================================
+!------------------------------------------------------------------------

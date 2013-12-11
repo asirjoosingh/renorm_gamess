@@ -1,0 +1,2931 @@
+C  8 Aug 13 - JMS - coalesce explicit expressions into loops
+C 11 APR 08 - AA  - COSMETIC REFORMATTING OF COMMON BLOCKS
+C 22 DEC 06 - ST,NK,MC - ADD LC EXCHANGE ARGUMENTS
+C  5 JUL 05 - MWS - SELECT NEW ATOM,BASIS,EFP,PCM,DAF DIMENSIONS
+C 13 FEB 05 - MWS - PAD COMMON BLOCK NSHEL
+C  5 FEB 05 - MWS - CHANGE COMMON NAME GAMMAF TO BE FMTTBL INSTEAD
+C 10 NOV 04 - KI  - MCDAV,INTJ4-6,INTK5,INTK6: FASTER SP ROTATED AXIS
+C  7 SEP 04 - GDF - INTJ1-INTJ6: USE FULLY ACCURATE FM(T) INTERPOLATION
+C  4 NOV 03 - KI  - SP0S1S: DO AXES-1 INTEGRALS BY MCMURCHIE-DAVIDSON,
+C                   INCORPORATE ROTATION TO AXES2; GENR70,TQ0S1S: TWEAKS
+C                   INTJ1 TO INTJ6: NEW AUXILIARIES FOR M-D INTEGRATION
+C  7 AUG 02 - JMS - ALTERED COMMENTS TO REFLECT GRADIENT CHANGES
+C 16 NOV 01 - JMS - GAMGEN HERE, POPLE PACKAGE INITIALIZATIONS CHANGED
+C  8 OCT 01 - JMS - ADDITIONAL REVISIONS
+C  1 AUG 01 - JMS - COMPLETE REWRITE OF ROTATED AXIS INTEGRAL CODE.
+C                   HISTORY BELOW IS KEPT MAINLY FOR HISTORICAL REASONS
+C 13 JUN 01 - JMS - PI/4 VALUE CHANGED FROM INACCURATE 0.7853981625
+C 13 JUN 96 - MWS - REMOVE FTNCHEK WARNINGS
+C 10 NOV 94 - MWS - REMOVE FTNCHEK WARNINGS
+C 15 JUL 94 - BMB - REDIMENSIONED TABLE TO 7200 TOTAL ELEMENTS
+C 25 SEP 91 - MWS - COMMON GOUT CONTAINS ONLY POPLE METHOD INTEGRALS
+C  9 AUG 91 - TLW - REDIMENSIONED GOUT FROM 3888 TO 151875
+C 10 AUG 88 - MWS - MXSH,MXGSH,MXGTOT FROM 120,10,440 TO 1000,30,5000
+C 20 MAY 88 - MWS - VECTORIZE TQ1111, PASS GOUT TO TQ0111 BY CALL
+C  9 MAY 88 - MWS - USE PARAMETER DIMENSIONS FOR COMMON BLOCKS
+C  7 JUL 86 - MWS - SANITIZE FLOATING POINT CONSTATNS
+C  4 APR 86 - MWS - LOGICAL OUT IN SP0000
+C 22 OCT 85 - STE - USE GENERIC EXP,SQRT; ROT2: IMPROVE LOGIC;
+C                   SP0000: USE /CHLT/TOL IN EXPONENT SIZE CHECK
+C                   REMOVE DATA DEPENENCIES IN R30011,R30101,R30111
+C                   R31111,TQ1111
+C 10 JAN 84 - STE - ROLL ROT2 CODE BACK INTO LOOPS
+C 16 DEC 83 - STE - ROLL TQ1111 CODE BACK INTO LOOPS
+C  2 OCT 82 - MWS,NDSU - CONVERT TO IBM
+C
+C*MODULE INT2B   *DECK GENR70
+C>
+C>    @brief   rotated axis integration involving s,p,L shells
+C>
+C>    @details rotated axis integration involving s,p,L shells,
+C>             by a mix of rotated axis manipulations,
+C>                        J.A.Pople, W.J.Hehre
+C>                    J.Comput.Phys. 27, 161-168(1978)
+C>             and McMurchie/Davidson quadrature,
+C>                       L.E.McMurchie, E.R.Davidson
+C>                    J.Comput.Phys. 26, 218-231(1978)
+C>             according to
+C>                       K.Ishimura, S.Nagase
+C>                Theoret.Chem.Acc. 120, 185-189(2008)
+C>             The accuracy parameters were adjusted in 2004 to
+C>             make this program as good as Rys quadrature.
+C>             Outline:
+C>    o  GENR70 EVALUATES INTEGRALS INVOLVING ONLY S AND P FUNCTIONS.
+C>       ONLY POSSIBILITIES ALLOWED FOR ANGULAR QUANTUM NUMBERS ARE
+C>                0000  0001  0011  0101  0111  1111
+C>       DETERMINES TYPE OF INTEGRAL SET BASED ON THE ABOVE NUMBERS
+C>       THIS DRIVER CALLS THE FOLLOWING ROUTINES IN THE ORDER GIVEN
+C>    o  SINFO, TO PRESET INTEGRAL ACCURACY LIMITS
+C>    o  SGEOM, OBTAINS GEOMETRICAL INFORMATION ABOUT THE FOUR CENTERS
+C>              AND FINDS TWO SETS OF LOCAL AXES FOR CENTERS:
+C>              (A AND B) P SET AND (C AND D) Q SET
+C>    o  PINF, OBTAINS INFORMATION ABOUT GAUSSIAN FUNCTIONS CONNECTED
+C>             WITH THE P SET OF AXES AT THIS POINT GENR70 OBTAINS
+C>             INFORMATION ABOUT THE GAUSSIAN FUNCTIONS CONNECTED WITH
+C>             THE Q SET OF AXES
+C>    o  SP0000 TO SP1111, OBTAIN UP TO 88 INTEGRALS REFERRED
+C>                         TO AXES A B AND Q
+C>    o  ROT2, ROTATES THESE INTEGRALS TO UP TO 160 INTEGRALS ON A B AND Q
+C>    o  TQ0011 TO TQ1111, TRANSLATE THESE INTEGRALS ON A B AND Q
+C>              TO UP TO 256 INTEGRALS ON A B C AND D
+C>    o  R30001 TO R31111, ROTATE UP TO 256 INTEGRALS ON A B C AND D
+C>              TO THE SAME NUMBER REFERRED TO THE FIXED SPACE AXES
+C>
+C>    @author  Warren Hehre circa Gaussian70,
+C>             Jose Sierra (Synstar, SA, Madrid) revised loop structure
+C>             and increased the Fm(t) grid density accuracy in 2001.
+C>             Kazuya Ishimura (IMS) replaced inner axis rotation by
+C>             direct McMurchie-Davidson quadrature in 2004.
+C>             fully accurate Fm(t) and cutoff changes in 2004.
+C>
+      SUBROUTINE GENR70(IEXCH,SCHSKP)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      LOGICAL SCHSKP
+C
+      PARAMETER (MXGTOT=20000, MXSH=5000)
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      COMMON /B     / CO(MXSH,3)
+      COMMON /FLIPS / IB(4,3)
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /GOUT  / GPOPLE(256*3),NORG
+      COMMON /INTAC2/ EI1,EI2,CUX
+      COMMON /MAXC  / CMAX(MXGTOT),CMAXA(MXGSH),CMAXB(MXGSH),
+     2                CMAXC(MXGSH),CMAXD(MXGSH),ISMLP(MXG2),ISMLQ
+      COMMON /NSHEL / EX(MXGTOT),CS(MXGTOT),CP(MXGTOT),CD(MXGTOT),
+     2                CF(MXGTOT),CG(MXGTOT),CH(MXGTOT),CI(MXGTOT),
+     3                KSTART(MXSH),KATOM(MXSH),KTYPE(MXSH),KNG(MXSH),
+     4                KLOC(MXSH),KMIN(MXSH),KMAX(MXSH),NSHELL
+      COMMON /POPOUT/ LPOPI,LPOPJ,LPOPK,LPOPL
+      COMMON /SHLG70/ ISHELL,JSHELL,KSHELL,LSHELL,INEW,JNEW,KNEW,LNEW
+      COMMON /SHLLFO/ NGA,LA,EXA(MXGSH),CSA(MXGSH),CPA(MXGSH),
+     2                NGB,LB,EXB(MXGSH),CSB(MXGSH),CPB(MXGSH),
+     3                NGC,LC,EXC(MXGSH),CSC(MXGSH),CPC(MXGSH),
+     4                NGD,LD,EXD(MXGSH),CSD(MXGSH),CPD(MXGSH)
+      COMMON /SHLNOS/ QQ4,LIT,LJT,LKT,LLT,LOCI,LOCJ,LOCK,LOCL,
+     2                MINI,MINJ,MINK,MINL,MAXI,MAXJ,MAXK,MAXL,
+     3                NIJ,IJ,KL,IJKL
+C
+C     ==================================================================
+C
+CJMS  LABELLED COMMON JMSGYH DEFINED FOR COMPUTATIONAL EFFICIENCY.
+CJMS  IT IS ONLY USED IN THIS MODULE INT2B AND IN MODULE INT2R.
+C
+      COMMON /JMSGYH/ SQ(0:1,0:1)
+      COMMON /KI2 / ACY,ACY2,AQX,AQX2,AQXY,Y03,Y04
+      COMMON /KI3 / R00(25),R01(120),R02(156),R03(80),R04(15)
+C
+      DIMENSION P12(3,3),P34(3,3),P(3,3),T(3)
+C
+      PARAMETER (ZER=0.0D+00, PT5=0.5D+00, ONE=1.0D+00)
+      PARAMETER (PT7=0.7D+00, PT9=0.9D+00)
+C        ACYCUT CHANGED FROM A VALUE OF 1E-4 IN 2004,
+C        FOR ACCURACY WHEN USING DIFFUSE EXPONENTS.
+      PARAMETER (ACYCUT=1.0D-10, TENM12=1.0D-12)
+C
+C                PITO52=(PI +PI )*PI * SQRT(PI )
+      PARAMETER (PITO52=34.986836655249726D+00)
+C
+      PIF= PITO52
+C
+      LAT= KTYPE(ISHELL)-1
+      LBT= KTYPE(JSHELL)-1
+      LCT= KTYPE(KSHELL)-1
+      LDT= KTYPE(LSHELL)-1
+      ITYPE= 1+LDT+2*(LCT+2*(LBT+2*LAT))
+C
+      IF(ITYPE.EQ. 1 .OR. ITYPE.EQ. 2 .OR. ITYPE.EQ. 4 .OR.
+     2   ITYPE.EQ. 6 .OR. ITYPE.EQ. 8 .OR. ITYPE.EQ.16) THEN
+C
+C TYPES 0000,0001,0011,0101,0111,1111 ARE UNALTERED
+C
+         INEW= ISHELL
+         JNEW= JSHELL
+         KNEW= KSHELL
+         LNEW= LSHELL
+         LA= LAT
+         LB= LBT
+         LC= LCT
+         LD= LDT
+         IB(1,IEXCH)= 1
+         IB(2,IEXCH)= 2
+         IB(3,IEXCH)= 3
+         IB(4,IEXCH)= 4
+C
+         LPOPI = 64
+         LPOPJ = 16
+         LPOPK =  4
+         LPOPL =  1
+      ELSEIF(ITYPE.EQ.10 .OR. ITYPE.EQ.12) THEN
+C
+C TYPES 1001,1011 HAVE IJ SWITCHED
+C
+         INEW= JSHELL
+         JNEW= ISHELL
+         KNEW= KSHELL
+         LNEW= LSHELL
+         LA= LBT
+         LB= LAT
+         LC= LCT
+         LD= LDT
+         IB(1,IEXCH)= 2
+         IB(2,IEXCH)= 1
+         IB(3,IEXCH)= 3
+         IB(4,IEXCH)= 4
+C
+         LPOPI = 16
+         LPOPJ = 64
+         LPOPK =  4
+         LPOPL =  1
+      ELSEIF(ITYPE.EQ. 3 .OR. ITYPE.EQ. 7) THEN
+C
+C TYPES 0010,0110 HAVE KL SWITCHED
+C
+         INEW= ISHELL
+         JNEW= JSHELL
+         KNEW= LSHELL
+         LNEW= KSHELL
+         LA= LAT
+         LB= LBT
+         LC= LDT
+         LD= LCT
+         IB(1,IEXCH)= 1
+         IB(2,IEXCH)= 2
+         IB(3,IEXCH)= 4
+         IB(4,IEXCH)= 3
+C
+         LPOPI = 64
+         LPOPJ = 16
+         LPOPK =  1
+         LPOPL =  4
+      ELSEIF(ITYPE.EQ. 5 .OR. ITYPE.EQ.13 .OR. ITYPE.EQ.14) THEN
+C
+C TYPES 0100,1100,1101 HAVE PAIRS IJ AND KL SWITCHED
+C
+         INEW= KSHELL
+         JNEW= LSHELL
+         KNEW= ISHELL
+         LNEW= JSHELL
+         LA= LCT
+         LB= LDT
+         LC= LAT
+         LD= LBT
+         IB(1,IEXCH)= 3
+         IB(2,IEXCH)= 4
+         IB(3,IEXCH)= 1
+         IB(4,IEXCH)= 2
+C
+         LPOPI =  4
+         LPOPJ =  1
+         LPOPK = 64
+         LPOPL = 16
+      ELSEIF(ITYPE.EQ.11) THEN
+C
+C TYPE 1010 HAS IJ SWITCHED AND KL SWITCHED
+C
+         INEW= JSHELL
+         JNEW= ISHELL
+         KNEW= LSHELL
+         LNEW= KSHELL
+         LA= LBT
+         LB= LAT
+         LC= LDT
+         LD= LCT
+         IB(1,IEXCH)= 2
+         IB(2,IEXCH)= 1
+         IB(3,IEXCH)= 4
+         IB(4,IEXCH)= 3
+C
+         LPOPI = 16
+         LPOPJ = 64
+         LPOPK =  1
+         LPOPL =  4
+      ELSEIF(ITYPE.EQ. 9) THEN
+C
+C TYPE 1000  HAS PAIRS IJ AND KL SWITCHED FOLLOWED BY KL SWITCH
+C
+         INEW= KSHELL
+         JNEW= LSHELL
+         KNEW= JSHELL
+         LNEW= ISHELL
+         LA= LCT
+         LB= LDT
+         LC= LBT
+         LD= LAT
+         IB(1,IEXCH)= 4
+         IB(2,IEXCH)= 3
+         IB(3,IEXCH)= 1
+         IB(4,IEXCH)= 2
+C
+         LPOPI =  1
+         LPOPJ =  4
+         LPOPK = 64
+         LPOPL = 16
+      ELSEIF(ITYPE.EQ.15) THEN
+C
+C TYPE 1110 HAS PAIRS IJ AND KL SWITCHED FOLLOWED BY IJ SWITCH
+C
+         INEW= LSHELL
+         JNEW= KSHELL
+         KNEW= ISHELL
+         LNEW= JSHELL
+         LA= LDT
+         LB= LCT
+         LC= LAT
+         LD= LBT
+         IB(1,IEXCH)= 3
+         IB(2,IEXCH)= 4
+         IB(3,IEXCH)= 2
+         IB(4,IEXCH)= 1
+C
+         LPOPI =  4
+         LPOPJ =  1
+         LPOPK = 16
+         LPOPL = 64
+      ENDIF
+C
+C ONLY 6 STANDARD TYPES REMAIN. 0000,0001,0011,0101,0111,1111
+C SPECIFY THESE BY JTYPE
+C
+      IF(ITYPE.EQ. 1) THEN
+         JTYPE= 1
+      ELSEIF(ITYPE.EQ. 2 .OR. ITYPE.EQ. 3 .OR.
+     2       ITYPE.EQ. 5 .OR. ITYPE.EQ. 9) THEN
+         JTYPE= 2
+      ELSEIF(ITYPE.EQ. 4 .OR. ITYPE.EQ.13) THEN
+         JTYPE= 3
+      ELSEIF(ITYPE.EQ. 6 .OR. ITYPE.EQ. 7 .OR.
+     2       ITYPE.EQ.10 .OR. ITYPE.EQ.11) THEN
+         JTYPE= 4
+      ELSEIF(ITYPE.EQ. 8 .OR. ITYPE.EQ.12 .OR.
+     2       ITYPE.EQ.14 .OR. ITYPE.EQ.15) THEN
+         JTYPE= 5
+      ELSEIF(ITYPE.EQ.16) THEN
+         JTYPE= 6
+      ENDIF
+C
+C EMPTY INTEGRAL SUMMATION STORAGE
+C
+      IKL= 0
+      IF(JTYPE.EQ. 1) THEN
+         R00(1)= ZER
+      ELSEIF(JTYPE.EQ. 2) THEN
+         CALL INTK2(IKL)
+      ELSEIF(JTYPE.EQ. 3) THEN
+         CALL INTK3(IKL)
+      ELSEIF(JTYPE.EQ. 4) THEN
+         CALL INTK4(IKL)
+      ELSEIF(JTYPE.EQ. 5) THEN
+         CALL INTK5(IKL)
+      ELSEIF(JTYPE.EQ. 6) THEN
+         CALL INTK6(IKL)
+      ENDIF
+C
+C EMPTY COMMON GOUT
+C
+C---  NGOUT=256
+C---  CALL VCLR(GPOPLE(1+NORG),1,NGOUT)
+C
+C     SCHSKP (SCHWARZ SKIP) MEANS ONLY IB INDEXING, AND ZEROING IS DONE.
+C
+      IF(SCHSKP) GO TO 999
+C
+C OBTAIN INFORMATION ABOUT SHELLS: INEW, KNEW, JNEW, LNEW
+C NUMBER OF GAUSSIANS GO INTO NGA,... IN COMMON SHLLFO
+C SHELL ANGULAR QUANTUM NUMBERS LA,... GO INTO COMMON SHLLFO
+C GAUSSIAN EXPONENTS GO INTO ARRAYS EXA,EXB,EXC,EXD IN COMMON SHLLFO
+C GAUSSIAN COEFFICIENTS GO INTO ARRAYS CSA,CPA,... IN COMMON SHLLFO
+C
+C NUMBERS OF GAUSSIAN FUNCTIONS IN SHELLS INEW JNEW KNEW AND LNEW
+C
+      NGA= KNG(INEW)
+      NGB= KNG(JNEW)
+      NGC= KNG(KNEW)
+      NGD= KNG(LNEW)
+C
+C STARTING LOCATIONS OF SHELLS INEW JNEW KNEW AND LNEW IN LIST
+C OF GAUSSIAN FUNCTIONS
+C
+      I= KSTART(INEW)-1
+      J= KSTART(JNEW)-1
+      K= KSTART(KNEW)-1
+      L= KSTART(LNEW)-1
+C
+C LOOP OVER GAUSSIANS IN EACH SHELL
+C FIRST SHELL INEW
+C
+      DO 110 NI=1,NGA
+         N=I+NI
+C
+C THE MAXIMUM COEFFICIENT ASSOCIATED WITH SHELL IS
+C USED TO DETERMINE IF ANY OF THE INTEGRALS ASSOCIATED WITH A SET
+C OF SHELLS IS LARGE ENOUGH TO WARRANT EVALUATION OF THE ENTIRE SET
+C
+         CMAXA(NI)= CMAX(N)
+C
+C GAUSSIAN EXPONENTS
+C
+         EXA(NI)= EX(N)
+C
+C S COEFFICIENTS
+C
+         CSA(NI)= CS(N)
+C
+C P COEFFICIENTS
+C
+         CPA(NI)= CP(N)
+  110 CONTINUE
+C
+C REPEAT PROCEDURE FOR SHELLS JNEW KNEW AND LNEW
+C
+      DO 120 NJ=1,NGB
+         N=J+NJ
+         CMAXB(NJ)= CMAX(N)
+         EXB(NJ)= EX(N)
+         CSB(NJ)= CS(N)
+         CPB(NJ)= CP(N)
+  120 CONTINUE
+      DO 130 NK=1,NGC
+         N=K+NK
+         CMAXC(NK)= CMAX(N)*QQ4
+         EXC(NK)= EX(N)
+         CSC(NK)= CS(N)*QQ4
+         CPC(NK)= CP(N)*QQ4
+  130 CONTINUE
+      DO 140 NL=1,NGD
+         N=L+NL
+         CMAXD(NL)= CMAX(N)
+         EXD(NL)= EX(N)
+         CSD(NL)= CS(N)
+         CPD(NL)= CP(N)
+  140 CONTINUE
+C
+C     MAB= LA+LB-1
+C     MCD= LC+LD-1
+      NGANGB=NGA*NGB
+C
+C COORDINATES OF ATOMS ASSOCIATED WITH SHELLS INEW JNEW KNEW AND LNEW
+C
+      R12= ZER
+      R34= ZER
+      DO 150 N=1,3
+         P12(N,1)= CO(INEW,N)
+         P12(N,2)= CO(JNEW,N)
+         P12(N,3)= P12(N,2)-P12(N,1)
+      R12= R12+P12(N,3)*P12(N,3)
+         P34(N,1)= CO(KNEW,N)
+         P34(N,2)= CO(LNEW,N)
+         P34(N,3)= P34(N,2)-P34(N,1)
+  150 R34= R34+P34(N,3)*P34(N,3)
+C
+C FIND DIRECTION COSINES OF PENULTIMATE AXES FROM COORDINATES OF AB
+C P(1,1),P(1,2),... ARE DIRECTION COSINES OF AXES AT P.  Z-AXIS ALONG AB
+C T(1),T(2),T(3)... ARE DIRECTION COSINES OF AXES AT Q.  Z-AXIS ALONG CD
+C
+C FIND DIRECTION COSINES OF AB AND CD. THESE ARE LOCAL Z-AXES.
+C IF INDETERMINATE TAKE ALONG SPACE Z-AXIS
+C
+      P(1,3)= ZER
+      P(2,3)= ZER
+      P(3,3)= ONE
+      RAB= ZER
+      IF(R12.NE.ZER) THEN
+         RAB= SQRT(R12)
+         TMP= ONE/RAB
+         P(1,3)= P12(1,3)*TMP
+         P(2,3)= P12(2,3)*TMP
+         P(3,3)= P12(3,3)*TMP
+      ENDIF
+C
+      T(1)= ZER
+      T(2)= ZER
+      T(3)= ONE
+      RCD= ZER
+      IF(R34.NE.ZER) THEN
+         RCD= SQRT(R34)
+         TMP= ONE/RCD
+         T(1)= P34(1,3)*TMP
+         T(2)= P34(2,3)*TMP
+         T(3)= P34(3,3)*TMP
+      ENDIF
+C
+C FIND LOCAL Y-AXIS AS COMMON PERPENDICULAR TO AB AND CD
+C IF INDETERMINATE TAKE PERPENDICULAR TO AB AND SPACE Z-AXIS
+C IF STILL INDETERMINATE TAKE PERPENDICULAR TO AB AND SPACE X-AXIS
+C
+      COSG= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+      COSG= MIN( ONE,COSG)
+      COSG= MAX(-ONE,COSG)
+C     SING= SQRT(ONE-COSG*COSG)
+C
+C MODIFIED ROTATION TESTING.
+C THIS FIX CURES THE SMALL ANGLE PROBLEM.
+C
+      P(1,2)= T(3)*P(2,3)-T(2)*P(3,3)
+      P(2,2)= T(1)*P(3,3)-T(3)*P(1,3)
+      P(3,2)= T(2)*P(1,3)-T(1)*P(2,3)
+      IF( ABS(COSG).GT.PT9) THEN
+         SING= SQRT(P(1,2)*P(1,2)+P(2,2)*P(2,2)+P(3,2)*P(3,2))
+      ELSE
+         SING= SQRT(ONE-COSG*COSG)
+      ENDIF
+      IF( ABS(COSG).LE.PT9 .OR. SING.GE.TENM12) THEN
+         TMP= ONE/SING
+         P(1,2)= P(1,2)*TMP
+         P(2,2)= P(2,2)*TMP
+         P(3,2)= P(3,2)*TMP
+      ELSE
+         I=3
+         IF( ABS(P(1,3)).LE.PT7) I=1
+         TMP = P(I,3)*P(I,3)
+         TMP = MIN( ONE,TMP)
+         TMP = SQRT(ONE-TMP)
+         IF(TMP.NE.ZER) TMP= ONE/TMP
+         IF( ABS(P(1,3)).LE.PT7) THEN
+            P(1,2)= ZER
+            P(2,2)= P(3,3)*TMP
+            P(3,2)=-P(2,3)*TMP
+         ELSE
+            P(1,2)= P(2,3)*TMP
+            P(2,2)=-P(1,3)*TMP
+            P(3,2)= ZER
+         ENDIF
+      ENDIF
+C
+C FIND DIRECTION COSINES OF LOCAL X-AXES
+C
+      P(1,1)= P(2,2)*P(3,3)-P(3,2)*P(2,3)
+      P(2,1)= P(3,2)*P(1,3)-P(1,2)*P(3,3)
+      P(3,1)= P(1,2)*P(2,3)-P(2,2)*P(1,3)
+C
+C FIND COORDINATES OF C RELATIVE TO LOCAL AXES AT A
+C
+      T(1)= P34(1,1)-P12(1,1)
+      T(2)= P34(2,1)-P12(2,1)
+      T(3)= P34(3,1)-P12(3,1)
+      ACX = T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+      ACY = T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+      ACZ = T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+C
+C SET ACY= 0  IF CLOSE
+C
+      IF( ABS(ACY).LE.ACYCUT) THEN
+         ACY = ZER
+         ACY2= ZER
+      ELSE
+         ACY2= ACY*ACY
+      ENDIF
+C
+C DIRECTION COSINES OF CD LOCAL AXES WITH RESPECT TO AB LOCAL AXES
+C (COSG,0,-SING)  (0,1,0)  (SING,0,COSG)
+C
+C PRELIMINARY P LOOP
+C
+C FILL GEOMPQ WITH INFORMATION ABOUT P IN PRELIMINARY P-LOOP
+C
+      JI= 1
+      DO 170 I=1,NGA
+         X01= EXA(I)
+         DO 170 J=1,NGB
+            X02= EXB(J)
+            X12= X01+X02
+            X21= ONE/X12
+            Y01= X01*X21
+            Y02= ONE-Y01
+            Y12= Y01*X02
+            TX12(JI)= X12
+            TX21(JI)= X21*PT5
+            TY02(JI)= Y02*RAB
+CJMS        TY01(JI)=-Y01*RAB
+            TY01(JI)= TY02(JI)-RAB
+C           IF(JTYPE.EQ.4 .OR. JTYPE.EQ.5) TY01(JI)= TY01(JI)*X12
+            R12Y12= R12*Y12
+            IF(R12Y12.GT.CUX) THEN
+               ISMLP(JI)=2
+               GO TO 160
+            ENDIF
+            E12= X21* EXP(-R12Y12)
+            TST= E12*CMAXA(I)*CMAXB(J)
+            ISMLP(JI)=0
+            IF(TST.LE.EI1) ISMLP(JI)=1
+            IF(TST.LE.EI2) ISMLP(JI)=2
+            E12= PIF*E12
+C
+C FOR TYPES 0000,0001,0011 ONLY D00P NEEDED
+C
+            D00P(JI)= E12*CSA(I)*CSB(J)
+            IF(JTYPE.GT.3) THEN
+               D01P(JI)= E12*CSA(I)*CPB(J)
+               IF(JTYPE.LE.5) THEN
+                  IF(D01P(JI).NE.ZER) THEN
+                     D00P(JI)= D00P(JI)/D01P(JI)
+                  ENDIF
+               ELSE
+                  D10P(JI)= E12*CPA(I)*CSB(J)
+                  D11P(JI)= E12*CPA(I)*CPB(J)
+                  IF(D11P(JI).NE.ZER) THEN
+                     TMP = ONE/D11P(JI)
+                     D00P(JI)= D00P(JI)*TMP
+                     D01P(JI)= D01P(JI)*TMP
+                     D10P(JI)= D10P(JI)*TMP
+                  ENDIF
+               ENDIF
+            ENDIF
+  160       CONTINUE
+  170 JI=JI+1
+C
+C BEGIN Q LOOP
+C
+      IKL= 0
+      DO 190 K=1,NGC
+         X03= EXC(K)
+         DO 190 L=1,NGD
+            X04= EXD(L)
+            X34= X03+X04
+            X43= ONE/X34
+            Y03= X03*X43
+            Y04= ONE-Y03
+            Y34= Y03*X04
+            R34Y34= R34*Y34
+            IF(R34Y34.GT.CUX) GO TO 180
+            E34= X43* EXP(-R34Y34)
+            TST= E34*CMAXC(K)*CMAXD(L)
+            IF(TST.LE.EI2) GO TO 180
+            ISMLQ= 0
+            IF(TST.LE.EI1) ISMLQ= 1
+C
+C CQX = COMPONENT OF CQ ALONG PENULTIMATE X-AXIS
+C CQZ = COMPONENT OF CQ ALONG PENULTIMATE Z-AXIS
+C
+            CQ = RCD*Y04
+            CQX= CQ*SING
+            CQZ= CQ*COSG
+C
+C FIND COORDINATES OF Q RELATIVE TO AXES AT A
+C QPR IS PERPENDICULAR FROM Q TO AB
+C
+            AQX= ACX+CQX
+            AQX2=AQX*AQX
+            AQXY=AQX*ACY
+            AQZ= ACZ+CQZ
+            QPS= AQX2+ACY2
+C
+            IF(JTYPE.NE.1) THEN
+               SQ(0,0)= E34*CSC(K)*CSD(L)
+               SQ(1,0)= E34*CSC(K)*CPD(L)
+               SQ(0,1)= E34*CPC(K)*CSD(L)
+               SQ(1,1)= E34*CPC(K)*CPD(L)
+            ELSE
+               SQ(0,0)= E34*CSC(K)*CSD(L)
+            ENDIF
+C
+C USE SPECIAL FAST ROUTINE FOR INNER LOOPS FOR 0000 ... 1111
+C
+CJMS  ZEROING OF THE FQx (x=0..4) ARRAYS OF LABELLED COMMON /FQ04/
+CJMS  TAKES PLACE IN THE INTJx (x=1..6) SUBROUTINES
+C
+CJMS  ZEROING OF THE R0x (x=0..4) ARRAYS OF LABELLED COMMON /KI3 /
+CJMS  TOOK PLACE IN THE CALL (FOR IKL=0) OF THE INTKx (x=2..6)
+CJMS  SUBROUTINES
+C
+            IKL= IKL+1
+            CALL SP0S1S(JTYPE,IKL)
+C
+  180       CONTINUE
+  190 CONTINUE
+C
+      IG= 1+NORG
+      IF(JTYPE.EQ.1) THEN
+         GPOPLE(IG)= R00(1)
+         GO TO 999
+      ENDIF
+C
+      QX= RCD*SING
+      QZ= RCD*COSG
+      IF(JTYPE.EQ. 2)THEN
+         CALL MCDV2(GPOPLE(IG),QX,QZ)
+      ELSEIF(JTYPE.EQ. 3) THEN
+         CALL MCDV3(GPOPLE(IG),QX,QZ)
+      ELSEIF(JTYPE.EQ. 4) THEN
+         CALL MCDV4(GPOPLE(IG),QX,QZ)
+      ELSEIF(JTYPE.EQ. 5) THEN
+         CALL MCDV5(GPOPLE(IG),QX,QZ)
+      ELSEIF(JTYPE.EQ. 6) THEN
+         CALL MCDV6(GPOPLE(IG),QX,QZ)
+      ENDIF
+C
+CJMS  NOW, THE TRANSPOSE OF P TO BE USED FOR COMPUTATIONAL EFFICIENCY
+C
+      DO 195 J=1,2
+         DO 195 I=J+1,3
+            TMP= P(I,J)
+            P(I,J)= P(J,I)
+            P(J,I)= TMP
+  195 CONTINUE
+C
+      CALL R30S1S(JTYPE,GPOPLE(IG),P)
+C
+  999 CONTINUE
+      RETURN
+      END
+C*MODULE INT2B   *DECK SP0S1S
+C>
+C>    @brief   s,p rotated axis type selection
+C>
+C>    @details s,p rotated axis type selection
+C>
+      SUBROUTINE SP0S1S(JTYPE,IKL)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      COMMON /JMSGYH/ SQ(4)
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /KI3 / R00(25),R01(120),R02(156),R03(80),R04(15)
+C
+C FROM HERE, MCMURCHIE-DAVIDSON ALGORITHM IS USED.
+C
+C GENERATE (R] INTEGRALS
+C
+      IF(JTYPE.EQ. 1) THEN
+         CALL INTJ1
+         R00(1)= R00(1)+FQ0(1)*SQ(1)
+      ELSEIF(JTYPE.EQ. 2) THEN
+         CALL INTJ2
+         CALL INTK2(IKL)
+      ELSEIF(JTYPE.EQ. 3) THEN
+         CALL INTJ3
+         CALL INTK3(IKL)
+      ELSEIF(JTYPE.EQ. 4) THEN
+         CALL INTJ4
+         CALL INTK4(IKL)
+      ELSEIF(JTYPE.EQ. 5) THEN
+         CALL INTJ5
+         CALL INTK5(IKL)
+      ELSEIF(JTYPE.EQ. 6) THEN
+         CALL INTJ6
+         CALL INTK6(IKL)
+      ENDIF
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK R30S1S
+C>
+C>    @brief   rotate up to 256 s,p integrals to space fixed axes
+C>
+C>    @details rotate up to 256 s,p integrals to space fixed axes
+C>             INCOMING AND OUTGOING INTEGRALS IN F, while P(1,1),...
+C>             ARE DIRECTION COSINES OF SPACE FIXED AXES WRT AXES AT P
+C>
+      SUBROUTINE R30S1S(JTYPE,F,P)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      DIMENSION F(0:3,0:3,0:3,0:3),P(3,3)
+C
+      DIMENSION T(3)
+C
+      IF(JTYPE.EQ.2) THEN
+         T(1)= F(1,0,0,0)
+         T(2)= F(2,0,0,0)
+         T(3)= F(3,0,0,0)
+         F(1,0,0,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+         F(2,0,0,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+         F(3,0,0,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+      ELSEIF(JTYPE.EQ.3) THEN
+         DO 310 I=0,3
+            T(1)= F(I,1,0,0)
+            T(2)= F(I,2,0,0)
+            T(3)= F(I,3,0,0)
+            F(I,1,0,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+            F(I,2,0,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+            F(I,3,0,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  310    CONTINUE
+         DO 320 J=0,3
+            T(1)= F(1,J,0,0)
+            T(2)= F(2,J,0,0)
+            T(3)= F(3,J,0,0)
+            F(1,J,0,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+            F(2,J,0,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+            F(3,J,0,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  320    CONTINUE
+      ELSEIF(JTYPE.EQ.4) THEN
+         DO 410 I=0,3
+            T(1)= F(I,0,1,0)
+            T(2)= F(I,0,2,0)
+            T(3)= F(I,0,3,0)
+            F(I,0,1,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+            F(I,0,2,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+            F(I,0,3,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  410    CONTINUE
+         DO 420 K=0,3
+            T(1)= F(1,0,K,0)
+            T(2)= F(2,0,K,0)
+            T(3)= F(3,0,K,0)
+            F(1,0,K,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+            F(2,0,K,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+            F(3,0,K,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  420    CONTINUE
+      ELSEIF(JTYPE.EQ.5) THEN
+         DO 510 J=0,3
+            DO 510 I=0,3
+               T(1)= F(I,J,1,0)
+               T(2)= F(I,J,2,0)
+               T(3)= F(I,J,3,0)
+               F(I,J,1,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+               F(I,J,2,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+               F(I,J,3,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  510    CONTINUE
+         DO 520 K=0,3
+            DO 520 I=0,3
+               T(1)= F(I,1,K,0)
+               T(2)= F(I,2,K,0)
+               T(3)= F(I,3,K,0)
+               F(I,1,K,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+               F(I,2,K,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+               F(I,3,K,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  520    CONTINUE
+         DO 530 K=0,3
+            DO 530 J=0,3
+               T(1)= F(1,J,K,0)
+               T(2)= F(2,J,K,0)
+               T(3)= F(3,J,K,0)
+               F(1,J,K,0)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+               F(2,J,K,0)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+               F(3,J,K,0)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  530    CONTINUE
+      ELSEIF(JTYPE.EQ.6) THEN
+         DO 610 K=0,3
+            DO 610 J=0,3
+               DO 610 I=0,3
+                  T(1)= F(I,J,K,1)
+                  T(2)= F(I,J,K,2)
+                  T(3)= F(I,J,K,3)
+                  F(I,J,K,1)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+                  F(I,J,K,2)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+                  F(I,J,K,3)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  610    CONTINUE
+         DO 620 L=0,3
+            DO 620 J=0,3
+               DO 620 I=0,3
+                  T(1)= F(I,J,1,L)
+                  T(2)= F(I,J,2,L)
+                  T(3)= F(I,J,3,L)
+                  F(I,J,1,L)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+                  F(I,J,2,L)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+                  F(I,J,3,L)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  620    CONTINUE
+         DO 630 L=0,3
+            DO 630 K=0,3
+               DO 630 I=0,3
+                  T(1)= F(I,1,K,L)
+                  T(2)= F(I,2,K,L)
+                  T(3)= F(I,3,K,L)
+                  F(I,1,K,L)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+                  F(I,2,K,L)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+                  F(I,3,K,L)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  630    CONTINUE
+         DO 640 L=0,3
+            DO 640 K=0,3
+               DO 640 J=0,3
+                  T(1)= F(1,J,K,L)
+                  T(2)= F(2,J,K,L)
+                  T(3)= F(3,J,K,L)
+                  F(1,J,K,L)= T(1)*P(1,1)+T(2)*P(2,1)+T(3)*P(3,1)
+                  F(2,J,K,L)= T(1)*P(1,2)+T(2)*P(2,2)+T(3)*P(3,2)
+                  F(3,J,K,L)= T(1)*P(1,3)+T(2)*P(2,3)+T(3)*P(3,3)
+  640    CONTINUE
+      ENDIF
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTJ1
+C>
+C>    @brief   SSSS case
+C>
+C>    @details integration of a SSSS case
+C>
+      SUBROUTINE INTJ1
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 1 INTEGRALS
+C
+      PARAMETER (MXGTOT=20000)
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      PARAMETER (NTX=4, NPF=450, NGRD=7, NPX=1000, MXQT=16)
+      COMMON /FMTTBL/ FGRID(0:NTX,0:NPF,0:NGRD),XGRID(0:NTX,0:NPX)
+     *,               TMAX,RFINC(0:NGRD),RXINC
+     *,               RMR(MXQT),TLGM(0:MXQT),NORD
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(18),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /MAXC  / CMAX(MXGTOT),CMAXA(MXGSH),CMAXB(MXGSH),
+     2                CMAXC(MXGSH),CMAXD(MXGSH),ISMLP(MXG2),ISMLQ
+      LOGICAL         LCFLAG,LRINT
+      COMMON /NLRC  / LCFLAG,LRINT,EMU,EMU2,LRFILE
+C
+      PARAMETER (ZER=0.0D+00, ONE=1.0D+00)
+      PARAMETER (PI4=0.78539816339744831D+00)
+C
+         FQ0(1)= ZER
+C
+      DO 300 I=1,NGANGB
+         ISML= ISMLQ+ISMLP(I)
+         IF(ISML.GE.2) GO TO 300
+         X12= TX12(I)
+         Y02= TY02(I)
+         FQZ= D00P(I)
+         X41= ONE/(X12+X34)
+         PQR= Y02-AQZ
+         PQS= PQR*PQR
+         RHO= X12*X34*X41
+         IF(LRINT) THEN
+            EFR= EMU2/(EMU2+RHO)
+            RHO= RHO*EFR
+            FQZ= FQZ*SQRT(EFR)
+         END IF
+         XVA=(PQS+QPS)*RHO
+         RHO= RHO+RHO
+         N=0
+         IF(XVA.LE.TMAX) THEN
+C
+C     FM(T) EVALUATION
+C
+            TV= XVA*RFINC(N)
+            IP= NINT(TV)
+            FX=    FGRID(4,IP,N) *TV
+            FX=(FX+FGRID(3,IP,N))*TV
+            FX=(FX+FGRID(2,IP,N))*TV
+            FX=(FX+FGRID(1,IP,N))*TV
+            FX= FX+FGRID(0,IP,N)
+C
+            FQ(N)= FX
+CC          T2= XVA+XVA
+CC          DO M=N,1,-1
+CC             FQD(M-1)=(T2*FQD(M)+ET)*RMR(M)
+CC          END DO
+C
+            FQF= FQZ*SQRT(X41)
+               FQ(0)= FQ(0)*FQF
+CC          DO 210 M=0,N
+CC             FQ(M)= FQ(M)*FQF
+CC210       FQF= FQF*RHO
+         ELSE
+            XIN= ONE/XVA
+            FQ(0)= FQZ*SQRT(PI4*XIN*X41)
+CC          ROX= RHO*XIN
+CC          FQF= PT5*ROX
+CC          DO 220 M=1,N
+CC             FQ(M)= FQ(M-1)*FQF
+CC220       FQF= FQF+ROX
+         ENDIF
+C
+         FQ0(1)= FQ0(1)+FQ(0)
+C
+  300 CONTINUE
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTJ2
+C>
+C>    @brief   PSSS case
+C>
+C>    @details integration of a PSSS case
+C>
+      SUBROUTINE INTJ2
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 2 INTEGRALS
+C
+      PARAMETER (MXGTOT=20000)
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      PARAMETER (NTX=4, NPF=450, NGRD=7, NPX=1000, MXQT=16)
+      COMMON /FMTTBL/ FGRID(0:NTX,0:NPF,0:NGRD),XGRID(0:NTX,0:NPX)
+     *,               TMAX,RFINC(0:NGRD),RXINC
+     *,               RMR(MXQT),TLGM(0:MXQT),NORD
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(18),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /MAXC  / CMAX(MXGTOT),CMAXA(MXGSH),CMAXB(MXGSH),
+     2                CMAXC(MXGSH),CMAXD(MXGSH),ISMLP(MXG2),ISMLQ
+      LOGICAL         LCFLAG,LRINT
+      COMMON /NLRC  / LCFLAG,LRINT,EMU,EMU2,LRFILE
+C
+      PARAMETER (ZER=0.0D+00, PT5=0.5D+00, ONE=1.0D+00)
+      PARAMETER (PI4=0.78539816339744831D+00)
+C
+         FQ0(1)= ZER
+         FQ1(1)= ZER
+         FQ1(2)= ZER
+C
+      DO 300 I=1,NGANGB
+         ISML= ISMLQ+ISMLP(I)
+         IF(ISML.GE.2) GO TO 300
+         X12= TX12(I)
+         Y02= TY02(I)
+         FQZ= D00P(I)
+         X41= ONE/(X12+X34)
+         PQR= Y02-AQZ
+         PQS= PQR*PQR
+         RHO= X12*X34*X41
+         IF(LRINT) THEN
+            EFR= EMU2/(EMU2+RHO)
+            RHO= RHO*EFR
+            FQZ= FQZ*SQRT(EFR)
+         ENDIF
+         XVA=(PQS+QPS)*RHO
+         RHO= RHO+RHO
+         N=1
+         IF(XVA.LE.TMAX) THEN
+C
+C     FM(T) EVALUATION
+C
+            TV= XVA*RFINC(0)
+            IP= NINT(TV)
+            FX=    FGRID(4,IP,0) *TV
+            FX=(FX+FGRID(3,IP,0))*TV
+            FX=(FX+FGRID(2,IP,0))*TV
+            FX=(FX+FGRID(1,IP,0))*TV
+            FX= FX+FGRID(0,IP,0)
+C
+            FQ(0)=FX
+C
+            TV= XVA*RFINC(N)
+            IP= NINT(TV)
+            FX=    FGRID(4,IP,N) *TV
+            FX=(FX+FGRID(3,IP,N))*TV
+            FX=(FX+FGRID(2,IP,N))*TV
+            FX=(FX+FGRID(1,IP,N))*TV
+            FX= FX+FGRID(0,IP,N)
+C
+            FQ(N)= FX
+CC          T2= XVA+XVA
+CC          DO M=N,1,-1
+CC             FQD(M-1)=(T2*FQD(M)+ET)*RMR(M)
+CC          END DO
+C
+            FQF= FQZ*SQRT(X41)
+               FQ(0)= FQ(0)*FQF
+            FQF= FQF*RHO
+               FQ(1)= FQ(1)*FQF
+CC          DO 210 M=0,N
+CC             FQ(M)= FQ(M)*FQF
+CC210       FQF= FQF*RHO
+         ELSE
+            XIN= ONE/XVA
+            FQ(0)= FQZ*SQRT(PI4*XIN*X41)
+            ROX= RHO*XIN
+            FQF= PT5*ROX
+               FQ(1)= FQ(0)*FQF
+CC          DO 220 M=1,N
+CC             FQ(M)= FQ(M-1)*FQF
+CC220       FQF= FQF+ROX
+         ENDIF
+C
+         FQ0(1)= FQ0(1)+FQ(0)
+         FQ1(1)= FQ1(1)+FQ(1)
+         FQ1(2)= FQ1(2)+FQ(1)*PQR
+C
+  300 CONTINUE
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTJ3
+C>
+C>    @brief   PPSS case
+C>
+C>    @details integration of a PPSS case
+C>
+      SUBROUTINE INTJ3
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 3 INTEGRALS
+C
+      PARAMETER (MXGTOT=20000)
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      PARAMETER (NTX=4, NPF=450, NGRD=7, NPX=1000, MXQT=16)
+      COMMON /FMTTBL/ FGRID(0:NTX,0:NPF,0:NGRD),XGRID(0:NTX,0:NPX)
+     *,               TMAX,RFINC(0:NGRD),RXINC
+     *,               RMR(MXQT),TLGM(0:MXQT),NORD
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(18),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /MAXC  / CMAX(MXGTOT),CMAXA(MXGSH),CMAXB(MXGSH),
+     2                CMAXC(MXGSH),CMAXD(MXGSH),ISMLP(MXG2),ISMLQ
+      LOGICAL         LCFLAG,LRINT
+      COMMON /NLRC  / LCFLAG,LRINT,EMU,EMU2,LRFILE
+C
+      PARAMETER (ZER=0.0D+00, PT5=0.5D+00, ONE=1.0D+00)
+      PARAMETER (PI4=0.78539816339744831D+00)
+C
+         FQ0(1)= ZER
+         FQ1(1)= ZER
+         FQ1(2)= ZER
+         FQ2(1)= ZER
+         FQ2(2)= ZER
+         FQ2(3)= ZER
+C
+      DO 300 I=1,NGANGB
+         ISML= ISMLQ+ISMLP(I)
+         IF(ISML.GE.2) GO TO 300
+         X12= TX12(I)
+         Y02= TY02(I)
+         FQZ= D00P(I)
+         X41= ONE/(X12+X34)
+         PQR= Y02-AQZ
+         PQS= PQR*PQR
+         RHO= X12*X34*X41
+         IF(LRINT) THEN
+            EFR= EMU2/(EMU2+RHO)
+            RHO= RHO*EFR
+            FQZ= FQZ*SQRT(EFR)
+         ENDIF
+         XVA=(PQS+QPS)*RHO
+         RHO= RHO+RHO
+         N=2
+         IF(XVA.LE.TMAX) THEN
+C
+C     FM(T) EVALUATION
+C
+            TV= XVA*RFINC(N)
+            IP= NINT(TV)
+            FX=    FGRID(4,IP,N) *TV
+            FX=(FX+FGRID(3,IP,N))*TV
+            FX=(FX+FGRID(2,IP,N))*TV
+            FX=(FX+FGRID(1,IP,N))*TV
+            FX= FX+FGRID(0,IP,N)
+            TV= XVA*RXINC
+            IP= NINT(TV)
+            ET=    XGRID(4,IP) *TV
+            ET=(ET+XGRID(3,IP))*TV
+            ET=(ET+XGRID(2,IP))*TV
+            ET=(ET+XGRID(1,IP))*TV
+            ET= ET+XGRID(0,IP)
+C
+            FQ(N)= FX
+            T2= XVA+XVA
+               FQ(2-1)=(T2*FQ(2)+ET)*RMR(2)
+               FQ(1-1)=(T2*FQ(1)+ET)*RMR(1)
+CC          DO M=N,1,-1
+CC             FQ(M-1)=(T2*FQ(M)+ET)*RMR(M)
+CC          END DO
+C
+            FQF= FQZ*SQRT(X41)
+               FQ(0)= FQ(0)*FQF
+            FQF= FQF*RHO
+               FQ(1)= FQ(1)*FQF
+            FQF= FQF*RHO
+               FQ(2)= FQ(2)*FQF
+CC          DO 210 M=0,N
+CC             FQ(M)= FQ(M)*FQF
+CC210       FQF= FQF*RHO
+         ELSE
+            XIN= ONE/XVA
+            FQ(0)= FQZ*SQRT(PI4*XIN*X41)
+            ROX= RHO*XIN
+            FQF= PT5*ROX
+               FQ(1)= FQ(0)*FQF
+            FQF= FQF+ROX
+               FQ(2)= FQ(1)*FQF
+CC          DO 220 M=1,N
+CC             FQ(M)= FQ(M-1)*FQF
+CC220       FQF= FQF+ROX
+         ENDIF
+C
+         FQ0(1)= FQ0(1)+FQ(0)
+         FQ1(1)= FQ1(1)+FQ(1)
+         FQ1(2)= FQ1(2)+FQ(1)*PQR
+         FQ2(1)= FQ2(1)+FQ(2)
+         FQ2(2)= FQ2(2)+FQ(2)*PQR
+         FQ2(3)= FQ2(3)+FQ(2)*PQS
+C
+  300 CONTINUE
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTJ4
+C>
+C>    @brief   PSPS case
+C>
+C>    @details integration of a PSPS case
+C>
+      SUBROUTINE INTJ4
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 4 INTEGRALS
+C
+      PARAMETER (MXGTOT=20000)
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      PARAMETER (NTX=4, NPF=450, NGRD=7, NPX=1000, MXQT=16)
+      COMMON /FMTTBL/ FGRID(0:NTX,0:NPF,0:NGRD),XGRID(0:NTX,0:NPX)
+     *,               TMAX,RFINC(0:NGRD),RXINC
+     *,               RMR(MXQT),TLGM(0:MXQT),NORD
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(18),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /MAXC  / CMAX(MXGTOT),CMAXA(MXGSH),CMAXB(MXGSH),
+     2                CMAXC(MXGSH),CMAXD(MXGSH),ISMLP(MXG2),ISMLQ
+      LOGICAL         LCFLAG,LRINT
+      COMMON /NLRC  / LCFLAG,LRINT,EMU,EMU2,LRFILE
+C
+      PARAMETER (ZER=0.0D+00, PT5=0.5D+00, ONE=1.0D+00)
+      PARAMETER (PI4=0.78539816339744831D+00)
+C
+         FQ0(1)= ZER
+         FQ0(2)= ZER
+         DO J=1,6
+            FQ1(J)= ZER
+         ENDDO
+         FQ2(1)= ZER
+         FQ2(2)= ZER
+         FQ2(3)= ZER
+C
+      DO 300 I=1,NGANGB
+         ISML= ISMLQ+ISMLP(I)
+         IF(ISML.GE.2) GO TO 300
+         X12= TX12(I)
+         Y02= TY02(I)
+         FQZ= D01P(I)
+         X41= ONE/(X12+X34)
+         PQR= Y02-AQZ
+         PQS= PQR*PQR
+         RHO= X12*X34*X41
+         IF(LRINT) THEN
+            EFR= EMU2/(EMU2+RHO)
+            RHO= RHO*EFR
+            FQZ= FQZ*SQRT(EFR)
+         ENDIF
+         XVA=(PQS+QPS)*RHO
+         RHO= RHO+RHO
+         N=2
+         IF(XVA.LE.TMAX) THEN
+C
+C     FM(T) EVALUATION
+C
+            TV= XVA*RFINC(N)
+            IP= NINT(TV)
+            FX=    FGRID(4,IP,N) *TV
+            FX=(FX+FGRID(3,IP,N))*TV
+            FX=(FX+FGRID(2,IP,N))*TV
+            FX=(FX+FGRID(1,IP,N))*TV
+            FX= FX+FGRID(0,IP,N)
+            TV= XVA*RXINC
+            IP= NINT(TV)
+            ET=    XGRID(4,IP) *TV
+            ET=(ET+XGRID(3,IP))*TV
+            ET=(ET+XGRID(2,IP))*TV
+            ET=(ET+XGRID(1,IP))*TV
+            ET= ET+XGRID(0,IP)
+C
+            FQ(N)= FX
+            T2= XVA+XVA
+               FQ(2-1)=(T2*FQ(2)+ET)*RMR(2)
+               FQ(1-1)=(T2*FQ(1)+ET)*RMR(1)
+CC          DO M=N,1,-1
+CC             FQ(M-1)=(T2*FQ(M)+ET)*RMR(M)
+CC          END DO
+C
+            FQF= FQZ*SQRT(X41)
+               FQ(0)= FQ(0)*FQF
+            FQF= FQF*RHO
+               FQ(1)= FQ(1)*FQF
+            FQF= FQF*RHO
+               FQ(2)= FQ(2)*FQF
+CC          DO 210 M=0,N
+CC             FQ(M)= FQ(M)*FQF
+CC210       FQF= FQF*RHO
+         ELSE
+            XIN= ONE/XVA
+            FQ(0)= FQZ*SQRT(PI4*XIN*X41)
+            ROX= RHO*XIN
+            FQF= PT5*ROX
+               FQ(1)= FQ(0)*FQF
+            FQF= FQF+ROX
+               FQ(2)= FQ(1)*FQF
+CC          DO 220 M=1,N
+CC             FQ(M)= FQ(M-1)*FQF
+CC220       FQF= FQF+ROX
+         ENDIF
+C
+         XMD1= TX21(I)
+         Y01 = TY01(I)
+         DP00= D00P(I)
+         TMP1= XMD1*PQR
+         TMP2= XMD1*PQS
+C
+         FQ0(1)= FQ0(1)+FQ(0)*DP00
+         FQ0(2)= FQ0(2)+FQ(0)*Y01
+         FQ1(1)= FQ1(1)+FQ(1)*DP00
+         FQ1(2)= FQ1(2)+FQ(1)*DP00*PQR
+         FQ1(3)= FQ1(3)+FQ(1)*XMD1
+         FQ1(4)= FQ1(4)+FQ(1)*TMP1
+         FQ1(5)= FQ1(5)+FQ(1)*Y01
+         FQ1(6)= FQ1(6)+FQ(1)*Y01 *PQR
+         FQ2(1)= FQ2(1)+FQ(2)*XMD1
+         FQ2(2)= FQ2(2)+FQ(2)*TMP1
+         FQ2(3)= FQ2(3)+FQ(2)*TMP2
+C
+  300 CONTINUE
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTJ5
+C>
+C>    @brief   PPPS case
+C>
+C>    @details integration of a PPPS case
+C>
+      SUBROUTINE INTJ5
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 5 INTEGRALS
+C
+      PARAMETER (MXGTOT=20000)
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      PARAMETER (NTX=4, NPF=450, NGRD=7, NPX=1000, MXQT=16)
+      COMMON /FMTTBL/ FGRID(0:NTX,0:NPF,0:NGRD),XGRID(0:NTX,0:NPX)
+     *,               TMAX,RFINC(0:NGRD),RXINC
+     *,               RMR(MXQT),TLGM(0:MXQT),NORD
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(3,9),FQ3(20),FQ4(5)
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /MAXC  / CMAX(MXGTOT),CMAXA(MXGSH),CMAXB(MXGSH),
+     2                CMAXC(MXGSH),CMAXD(MXGSH),ISMLP(MXG2),ISMLQ
+      LOGICAL         LCFLAG,LRINT
+      COMMON /NLRC  / LCFLAG,LRINT,EMU,EMU2,LRFILE
+C
+      DIMENSION WORK(3,3)
+C
+      PARAMETER (ZER=0.0D+00, PT5=0.5D+00, ONE=1.0D+00)
+      PARAMETER (PI4=0.78539816339744831D+00)
+C
+         FQ0(1)= ZER
+         FQ0(2)= ZER
+         DO J=1,3
+            FQ1(1,J)= ZER
+            FQ1(2,J)= ZER
+C
+            FQ2(1,J)= ZER
+            FQ2(2,J)= ZER
+            FQ2(3,J)= ZER
+         ENDDO
+         FQ3(1)= ZER
+         FQ3(2)= ZER
+         FQ3(3)= ZER
+         FQ3(4)= ZER
+C
+      DO 300 I=1,NGANGB
+         ISML= ISMLQ+ISMLP(I)
+         IF(ISML.GE.2) GO TO 300
+         X12= TX12(I)
+         Y02= TY02(I)
+         FQZ= D01P(I)
+         X41= ONE/(X12+X34)
+         PQR= Y02-AQZ
+         PQS= PQR*PQR
+         RHO= X12*X34*X41
+         IF(LRINT) THEN
+            EFR= EMU2/(EMU2+RHO)
+            RHO= RHO*EFR
+            FQZ= FQZ*SQRT(EFR)
+         ENDIF
+         XVA=(PQS+QPS)*RHO
+         RHO= RHO+RHO
+         N=3
+         IF(XVA.LE.TMAX) THEN
+C
+C     FM(T) EVALUATION...DOWNWARD RECURSION FOR JTYPE.GE.5
+C
+            TV= XVA*RFINC(N)
+            IP= NINT(TV)
+            FX=    FGRID(4,IP,N) *TV
+            FX=(FX+FGRID(3,IP,N))*TV
+            FX=(FX+FGRID(2,IP,N))*TV
+            FX=(FX+FGRID(1,IP,N))*TV
+            FX= FX+FGRID(0,IP,N)
+            TV= XVA*RXINC
+            IP= NINT(TV)
+            ET=    XGRID(4,IP) *TV
+            ET=(ET+XGRID(3,IP))*TV
+            ET=(ET+XGRID(2,IP))*TV
+            ET=(ET+XGRID(1,IP))*TV
+            ET= ET+XGRID(0,IP)
+C
+            FQ(N)= FX
+            T2= XVA+XVA
+               FQ(3-1)=(T2*FQ(3)+ET)*RMR(3)
+               FQ(2-1)=(T2*FQ(2)+ET)*RMR(2)
+               FQ(1-1)=(T2*FQ(1)+ET)*RMR(1)
+CC          DO M=N,1,-1
+CC             FQ(M-1)=(T2*FQ(M)+ET)*RMR(M)
+CC          END DO
+C
+            FQF= FQZ*SQRT(X41)
+               FQ(0)= FQ(0)*FQF
+            FQF= FQF*RHO
+               FQ(1)= FQ(1)*FQF
+            FQF= FQF*RHO
+               FQ(2)= FQ(2)*FQF
+            FQF= FQF*RHO
+               FQ(3)= FQ(3)*FQF
+CC          DO 210 M=0,N
+CC             FQ(M)= FQ(M)*FQF
+CC210       FQF= FQF*RHO
+         ELSE
+            XIN= ONE/XVA
+            FQ(0)= FQZ*SQRT(PI4*XIN*X41)
+            ROX= RHO*XIN
+            FQF= PT5*ROX
+               FQ(1)= FQ(0)*FQF
+            FQF= FQF+ROX
+               FQ(2)= FQ(1)*FQF
+            FQF= FQF+ROX
+               FQ(3)= FQ(2)*FQF
+CC          DO 220 M=1,N
+CC             FQ(M)= FQ(M-1)*FQF
+CC220       FQF= FQF+ROX
+         ENDIF
+C
+         XMD1= TX21(I)
+         Y01 = TY01(I)
+         DP00= D00P(I)
+         WORK(1,1)= DP00
+         WORK(1,2)= Y01
+         WORK(1,3)= XMD1
+         DO J=1,3
+            WORK(2,J)= WORK(1,J)*PQR
+            WORK(3,J)= WORK(1,J)*PQS
+         ENDDO
+C
+         FQ0(1)= FQ0(1)+FQ(0)*WORK(1,1)
+         FQ0(2)= FQ0(2)+FQ(0)*WORK(1,2)
+         DO J=1,3
+            FQ1(1,J)= FQ1(1,J)+FQ(1)*WORK(1,J)
+            FQ1(2,J)= FQ1(2,J)+FQ(1)*WORK(2,J)
+C
+            FQ2(1,J)= FQ2(1,J)+FQ(2)*WORK(1,J)
+            FQ2(2,J)= FQ2(2,J)+FQ(2)*WORK(2,J)
+            FQ2(3,J)= FQ2(3,J)+FQ(2)*WORK(3,J)
+         ENDDO
+         FQ3(1)= FQ3(1)+FQ(3)*WORK(1,3)
+         FQ3(2)= FQ3(2)+FQ(3)*WORK(2,3)
+         FQ3(3)= FQ3(3)+FQ(3)*WORK(3,3)
+         FQ3(4)= FQ3(4)+FQ(3)*WORK(3,3)*PQR
+C
+  300 CONTINUE
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTJ6
+C>
+C>    @brief   PPPP case
+C>
+C>    @details integration of a PPPP case
+C>
+      SUBROUTINE INTJ6
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 6 INTEGRALS
+C
+      PARAMETER (MXGTOT=20000)
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      PARAMETER (NTX=4, NPF=450, NGRD=7, NPX=1000, MXQT=16)
+      COMMON /FMTTBL/ FGRID(0:NTX,0:NPF,0:NGRD),XGRID(0:NTX,0:NPX)
+     *,               TMAX,RFINC(0:NGRD),RXINC
+     *,               RMR(MXQT),TLGM(0:MXQT),NORD
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(3,9),FQ3(4,5),FQ4(5)
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /MAXC  / CMAX(MXGTOT),CMAXA(MXGSH),CMAXB(MXGSH),
+     2                CMAXC(MXGSH),CMAXD(MXGSH),ISMLP(MXG2),ISMLQ
+      LOGICAL         LCFLAG,LRINT
+      COMMON /NLRC  / LCFLAG,LRINT,EMU,EMU2,LRFILE
+C
+      DIMENSION WORK(4,9)
+C
+      PARAMETER (ZER=0.0D+00, PT5=0.5D+00, ONE=1.0D+00)
+      PARAMETER (PI4=0.78539816339744831D+00)
+C
+         DO J=1,5
+            FQ0(J)= ZER
+         ENDDO
+         DO J=1,8
+            FQ1(1,J)= ZER
+            FQ1(2,J)= ZER
+         ENDDO
+            FQ1(1,9)= ZER
+         DO J=1,9
+            FQ2(1,J)= ZER
+            FQ2(2,J)= ZER
+            FQ2(3,J)= ZER
+         ENDDO
+         DO J=1,5
+            FQ3(1,J)= ZER
+            FQ3(2,J)= ZER
+            FQ3(3,J)= ZER
+            FQ3(4,J)= ZER
+         ENDDO
+         DO J=1,5
+            FQ4(J)= ZER
+         ENDDO
+C
+      DO 300 I=1,NGANGB
+         ISML= ISMLQ+ISMLP(I)
+         IF(ISML.GE.2) GO TO 300
+         X12= TX12(I)
+         Y02= TY02(I)
+         FQZ= D11P(I)
+         X41= ONE/(X12+X34)
+         PQR= Y02-AQZ
+         PQS= PQR*PQR
+         RHO= X12*X34*X41
+         IF(LRINT) THEN
+            EFR= EMU2/(EMU2+RHO)
+            RHO= RHO*EFR
+            FQZ= FQZ*SQRT(EFR)
+         ENDIF
+         XVA=(PQS+QPS)*RHO
+         RHO= RHO+RHO
+         N=4
+         IF(XVA.LE.TMAX) THEN
+C
+C     FM(T) EVALUATION...DOWNWARD RECURSION FOR JTYPE.GE.5
+C
+            TV= XVA*RFINC(N)
+            IP= NINT(TV)
+            FX=    FGRID(4,IP,N) *TV
+            FX=(FX+FGRID(3,IP,N))*TV
+            FX=(FX+FGRID(2,IP,N))*TV
+            FX=(FX+FGRID(1,IP,N))*TV
+            FX= FX+FGRID(0,IP,N)
+            TV= XVA*RXINC
+            IP= NINT(TV)
+            ET=    XGRID(4,IP) *TV
+            ET=(ET+XGRID(3,IP))*TV
+            ET=(ET+XGRID(2,IP))*TV
+            ET=(ET+XGRID(1,IP))*TV
+            ET= ET+XGRID(0,IP)
+C
+            FQ(N)= FX
+            T2= XVA+XVA
+            DO M=N,1,-1
+               FQ(M-1)=(T2*FQ(M)+ET)*RMR(M)
+            END DO
+C
+            FQF= FQZ*SQRT(X41)
+            DO 210 M=0,N
+               FQ(M)= FQ(M)*FQF
+  210       FQF= FQF*RHO
+         ELSE
+            XIN= ONE/XVA
+            FQ(0)= FQZ*SQRT(PI4*XIN*X41)
+            ROX= RHO*XIN
+            FQF= PT5*ROX
+            DO 220 M=1,N
+               FQ(M)= FQ(M-1)*FQF
+  220       FQF= FQF+ROX
+         ENDIF
+C
+         PQT= PQR*PQS
+         XMD1= TX21(I)
+         Y01 = TY01(I)
+         DP00= D00P(I)
+         DP01= D01P(I)
+         DP10= D10P(I)
+         WORK(1,1)= DP00
+         WORK(1,2)= Y01 *DP01
+         WORK(1,3)= Y02 *DP10
+         WORK(1,4)= Y01 *Y02
+         WORK(1,5)= XMD1
+         WORK(1,6)= XMD1*DP01
+         WORK(1,7)= XMD1*DP10
+         WORK(1,8)= XMD1*Y01
+         WORK(1,9)= XMD1*XMD1
+         DO J=1,4
+            WORK(2,J)= WORK(1,J)*PQR
+            WORK(3,J)= WORK(1,J)*PQS
+         ENDDO
+         DO J=5,9
+            WORK(2,J)= WORK(1,J)*PQR
+            WORK(3,J)= WORK(1,J)*PQS
+            WORK(4,J)= WORK(1,J)*PQT
+         ENDDO
+C
+         DO J=1,5
+            FQ0(J)= FQ0(J)+FQ(0)*WORK(1,J)
+         ENDDO
+         DO J=1,8
+            FQ1(1,J)= FQ1(1,J)+FQ(1)*WORK(1,J)
+            FQ1(2,J)= FQ1(2,J)+FQ(1)*WORK(2,J)
+         ENDDO
+            FQ1(1,9)= FQ1(1,9)+FQ(1)*WORK(1,9)
+         DO J=1,9
+            FQ2(1,J)= FQ2(1,J)+FQ(2)*WORK(1,J)
+            FQ2(2,J)= FQ2(2,J)+FQ(2)*WORK(2,J)
+            FQ2(3,J)= FQ2(3,J)+FQ(2)*WORK(3,J)
+         ENDDO
+         DO J=1,5
+            FQ3(1,J)= FQ3(1,J)+FQ(3)*WORK(1,J+4)
+            FQ3(2,J)= FQ3(2,J)+FQ(3)*WORK(2,J+4)
+            FQ3(3,J)= FQ3(3,J)+FQ(3)*WORK(3,J+4)
+            FQ3(4,J)= FQ3(4,J)+FQ(3)*WORK(4,J+4)
+         ENDDO
+         FQ4(1)= FQ4(1)+FQ(4)*WORK(1,9)
+         FQ4(2)= FQ4(2)+FQ(4)*WORK(2,9)
+         FQ4(3)= FQ4(3)+FQ(4)*WORK(3,9)
+         FQ4(4)= FQ4(4)+FQ(4)*WORK(4,9)
+         FQ4(5)= FQ4(5)+FQ(4)*WORK(4,9)*PQR
+C
+  300 CONTINUE
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTK2
+C>
+C>    @brief   PSSS case
+C>
+C>    @details integration of a PSSS case
+C>
+      SUBROUTINE INTK2(IKL)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 2 INTEGRALS
+C
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /JMSGYH/ SQ(4)
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /KI2 / ACY,ACY2,AQX,AQX2,AQXY,Y03,Y04
+      COMMON /KI3 / R00(25),R01(3,40),R02(6,26),R03(80),R04(15)
+C
+      PARAMETER (ZER=0.0D+00)
+C
+      IF(IKL.EQ. 0) THEN
+         R00(1)= ZER
+         R00(2)= ZER
+         R01(1,1)= ZER
+         R01(2,1)= ZER
+         R01(3,1)= ZER
+C
+         RETURN
+      ENDIF
+C
+      XMD2= X43 *0.5D+00
+      XMDT= XMD2*SQ(2)
+C
+      R00(1)= R00(1)+FQ0(1)*SQ(1)
+      R00(2)= R00(2)-FQ0(1)*SQ(2)*Y03
+C
+      R01(1,1)= R01(1,1)-FQ1(1,1)*AQX *XMDT
+      R01(2,1)= R01(2,1)-FQ1(1,1)*ACY *XMDT
+      R01(3,1)= R01(3,1)+FQ1(2,1)     *XMDT
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTK3
+C>
+C>    @brief   PPSS case
+C>
+C>    @details integration of a PPSS case
+C>
+      SUBROUTINE INTK3(IKL)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 3 INTEGRALS
+C
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /JMSGYH/ SQ(4)
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /KI2 / ACY,ACY2,AQX,AQX2,AQXY,Y03,Y04
+      COMMON /KI3 / R00(25),R01(3,40),R02(156),R03(80),R04(15)
+C
+      DIMENSION  WORK(4)
+C
+      PARAMETER (ZER=0.0D+00)
+C
+      IF(IKL.EQ. 0) THEN
+         R00(1)= ZER
+         R00(2)= ZER
+         R00(3)= ZER
+         R00(4)= ZER
+         R00(5)= ZER
+         DO I= 1, 4
+            R01(1,I)= ZER
+            R01(2,I)= ZER
+            R01(3,I)= ZER
+         ENDDO
+         R02(1)= ZER
+         R02(2)= ZER
+         R02(3)= ZER
+         R02(4)= ZER
+         R02(5)= ZER
+         R02(6)= ZER
+C
+         RETURN
+      ENDIF
+C
+      XMD2= X43 *0.5D+00
+      XMD3= XMD2*SQ(4)
+      XMDT= XMD3*XMD2
+      WORK(1)= XMD2*SQ(2)
+      WORK(2)= XMD2*SQ(3)
+      WORK(3)=-XMD3*Y03
+      WORK(4)= XMD3*Y04
+C
+         R00(1)= R00(1)+FQ0(1)     *SQ(1)
+         R00(2)= R00(2)-FQ0(1)*Y03 *SQ(2)
+         R00(3)= R00(3)+FQ0(1)*Y04 *SQ(3)
+         R00(4)= R00(4)+FQ0(1)*XMD3
+         R00(5)= R00(5)-FQ0(1)*Y03 *SQ(4)*Y04
+C
+         FQ11=-FQ1(1,1)*AQX
+         FQ12=-FQ1(1,1)*ACY
+         FQ13= FQ1(2,1)
+      DO I= 1, 4
+         R01(1,I)= R01(1,I)+FQ11*WORK(I)
+         R01(2,I)= R01(2,I)+FQ12*WORK(I)
+         R01(3,I)= R01(3,I)+FQ13*WORK(I)
+      ENDDO
+C
+         R02(1)= R02(1)+(FQ2(1)*AQX2-FQ1(1,1))*XMDT
+         R02(2)= R02(2)+(FQ2(1)*ACY2-FQ1(1,1))*XMDT
+         R02(3)= R02(3)+(FQ2(3)-FQ1(1,1))     *XMDT
+         R02(4)= R02(4)+ FQ2(1)*AQXY          *XMDT
+         R02(5)= R02(5)- FQ2(2)*AQX           *XMDT
+         R02(6)= R02(6)- FQ2(2)*ACY           *XMDT
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTK4
+C>
+C>    @brief   PSPS case
+C>
+C>    @details integration of a PSPS case
+C>
+      SUBROUTINE INTK4(IKL)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 4 INTEGRALS
+C
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /JMSGYH/ SQ(4)
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(27),FQ3(20),FQ4(5)
+      COMMON /KI2 / ACY,ACY2,AQX,AQX2,AQXY,Y03,Y04
+      COMMON /KI3 / R00(25),R01(3,40),R02(156),R03(80),R04(15)
+C
+      DIMENSION  WORK(4)
+C
+      PARAMETER (ZER=0.0D+00)
+C
+      IF(IKL.EQ. 0) THEN
+         R00(1)= ZER
+         R00(2)= ZER
+         R00(3)= ZER
+         R00(4)= ZER
+         DO I= 1, 4
+            R01(1,I)= ZER
+            R01(2,I)= ZER
+            R01(3,I)= ZER
+         ENDDO
+         R02(1)= ZER
+         R02(2)= ZER
+         R02(3)= ZER
+         R02(4)= ZER
+         R02(5)= ZER
+         R02(6)= ZER
+C
+         RETURN
+      ENDIF
+C
+      XMD2= X43 *0.5D+00
+      WORK(1)= XMD2*SQ(2)
+      WORK(2)=      SQ(1)
+      WORK(3)= WORK(1)
+      WORK(4)=-Y03 *SQ(2)
+C
+      R00(1)= R00(1)+FQ0(1)*WORK(2)
+      R00(2)= R00(2)+FQ0(1)*WORK(4)
+      R00(3)= R00(3)+FQ0(2)*WORK(2)
+      R00(4)= R00(4)+FQ0(2)*WORK(4)
+C
+      DO I= 1, 3
+         R01(1,I)= R01(1,I)-FQ1(1,I)*AQX *WORK(I)
+         R01(2,I)= R01(2,I)-FQ1(1,I)*ACY *WORK(I)
+         R01(3,I)= R01(3,I)+FQ1(2,I)     *WORK(I)
+      ENDDO
+         R01(1,4)= R01(1,4)-FQ1(1,2)*AQX *WORK(4)
+         R01(2,4)= R01(2,4)-FQ1(1,2)*ACY *WORK(4)
+         R01(3,4)= R01(3,4)+FQ1(2,2)     *WORK(4)
+C
+         R02(1)= R02(1)+(FQ2(1)*AQX2-FQ1(1,2))*WORK(1)
+         R02(2)= R02(2)+(FQ2(1)*ACY2-FQ1(1,2))*WORK(1)
+         R02(3)= R02(3)+(FQ2(3)     -FQ1(1,2))*WORK(1)
+         R02(4)= R02(4)+ FQ2(1)*AQXY          *WORK(1)
+         R02(5)= R02(5)- FQ2(2)*AQX           *WORK(1)
+         R02(6)= R02(6)- FQ2(2)*ACY           *WORK(1)
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTK5
+C>
+C>    @brief   PPPS case
+C>
+C>    @details integration of a PPPS case
+C>
+      SUBROUTINE INTK5(IKL)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 5 INTEGRALS
+C
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /JMSGYH/ SQ(4)
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(3,9),FQ3(4,5),FQ4(5)
+      COMMON /KI2 / ACY,ACY2,AQX,AQX2,AQXY,Y03,Y04
+      COMMON /KI3 / R00(5,5),R01(3,40),R02(6,26),R03(10,8),R04(15)
+C
+      DIMENSION WORK(9),FWK(6,3)
+C
+      PARAMETER (ZER=0.0D+00, F03=3.0D+00)
+C
+      IF(IKL.EQ. 0) THEN
+         DO I= 1, 2
+            R00(1,I)= ZER
+            R00(2,I)= ZER
+            R00(3,I)= ZER
+            R00(4,I)= ZER
+            R00(5,I)= ZER
+         ENDDO
+         DO I= 1,13
+            R01(1,I)= ZER
+            R01(2,I)= ZER
+            R01(3,I)= ZER
+         ENDDO
+         DO I= 1, 6
+            R02(1,I)= ZER
+            R02(2,I)= ZER
+            R02(3,I)= ZER
+            R02(4,I)= ZER
+            R02(5,I)= ZER
+            R02(6,I)= ZER
+         ENDDO
+         DO J= 1,10
+            R03(J,1)= ZER
+         ENDDO
+C
+         RETURN
+      ENDIF
+C
+      XMD2= X43 *0.5D+00
+      XMD3= XMD2*SQ(4)
+      XMDT= XMD3*XMD2
+C
+      XMDTY=-XMDT*ACY
+      XMDTX=-XMDT*AQX
+      XMDTXY=XMDT*AQXY
+C
+      WORK(1)=      SQ(1)
+      WORK(2)=-Y03 *SQ(2)
+      WORK(3)= Y04 *SQ(3)
+      WORK(4)=-Y03 *SQ(4)*Y04
+      WORK(5)= XMD3
+      WORK(6)= XMD2*SQ(2)
+      WORK(7)= XMD2*SQ(3)
+      WORK(8)=-XMD3*Y03
+      WORK(9)= XMD3*Y04
+C
+      DO 010 I= 1, 2
+         DO 010 J= 1, 5
+            R00(J,I)= R00(J,I)+FQ0(I)*WORK(J)
+  010 CONTINUE
+C
+      DO I= 1, 3
+         FWK(1,I)=-FQ1(1,I)*AQX
+         FWK(2,I)=-FQ1(1,I)*ACY
+         FWK(3,I)= FQ1(2,I)
+      ENDDO
+      DO I= 1, 4
+         R01(1,I)= R01(1,I)+FWK(1,1)*WORK(I+ 5)
+         R01(2,I)= R01(2,I)+FWK(2,1)*WORK(I+ 5)
+         R01(3,I)= R01(3,I)+FWK(3,1)*WORK(I+ 5)
+      ENDDO
+      DO I= 5, 8
+         R01(1,I)= R01(1,I)+FWK(1,2)*WORK(I+ 1)
+         R01(2,I)= R01(2,I)+FWK(2,2)*WORK(I+ 1)
+         R01(3,I)= R01(3,I)+FWK(3,2)*WORK(I+ 1)
+      ENDDO
+      DO I= 9,13
+         R01(1,I)= R01(1,I)+FWK(1,3)*WORK(I- 8)
+         R01(2,I)= R01(2,I)+FWK(2,3)*WORK(I- 8)
+         R01(3,I)= R01(3,I)+FWK(3,3)*WORK(I- 8)
+      ENDDO
+C
+      DO I= 1, 2
+         R02(1,I)= R02(1,I)+(FQ2(1,I)*AQX2-FQ1(1,I))*XMDT
+         R02(2,I)= R02(2,I)+(FQ2(1,I)*ACY2-FQ1(1,I))*XMDT
+         R02(3,I)= R02(3,I)+(FQ2(3,I)     -FQ1(1,I))*XMDT
+         R02(4,I)= R02(4,I)+ FQ2(1,I)               *XMDTXY
+         R02(5,I)= R02(5,I)+ FQ2(2,I)               *XMDTX
+         R02(6,I)= R02(6,I)+ FQ2(2,I)               *XMDTY
+      ENDDO
+         FWK(1,3)= FQ2(1,3)*AQX2-FQ1(1,3)
+         FWK(2,3)= FQ2(1,3)*ACY2-FQ1(1,3)
+         FWK(3,3)= FQ2(3,3)     -FQ1(1,3)
+         FWK(4,3)= FQ2(1,3)*AQXY
+         FWK(5,3)=-FQ2(2,3)*AQX
+         FWK(6,3)=-FQ2(2,3)*ACY
+      DO I= 3, 6
+         DO J= 1, 6
+            R02(J,I)= R02(J,I)+FWK(J,3)*WORK(I+ 3)
+         ENDDO
+      ENDDO
+C
+         R03( 1,1)= R03( 1,1)+(FQ3(1,1)*AQX2-FQ2(1,3)*F03)*XMDTX
+         R03( 2,1)= R03( 2,1)+(FQ3(1,1)*AQX2-FQ2(1,3)    )*XMDTY
+         R03( 3,1)= R03( 3,1)+(FQ3(2,1)*AQX2-FQ2(2,3)    )*XMDT
+         R03( 4,1)= R03( 4,1)+(FQ3(1,1)*ACY2-FQ2(1,3)    )*XMDTX
+         R03( 5,1)= R03( 5,1)+ FQ3(2,1)                   *XMDTXY
+         R03( 6,1)= R03( 6,1)+(FQ3(3,1)     -FQ2(1,3)    )*XMDTX
+         R03( 7,1)= R03( 7,1)+(FQ3(1,1)*ACY2-FQ2(1,3)*F03)*XMDTY
+         R03( 8,1)= R03( 8,1)+(FQ3(2,1)*ACY2-FQ2(2,3)    )*XMDT
+         R03( 9,1)= R03( 9,1)+(FQ3(3,1)     -FQ2(1,3)    )*XMDTY
+         R03(10,1)= R03(10,1)+(FQ3(4,1)     -FQ2(2,3)*F03)*XMDT
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK INTK6
+C>
+C>    @brief   PPPP case
+C>
+C>    @details integration of a PPPP case
+C>
+      SUBROUTINE INTK6(IKL)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+C GENERATE JTYPE= 6 INTEGRALS
+C
+      PARAMETER (MXGSH=30, MXG2=MXGSH*MXGSH)
+C
+      COMMON /GEOMPQ/ R12,RAB,X34,X43,AQZ,QPR,QPS,
+     2                TX12(MXG2),TX21(MXG2),TY01(MXG2),TY02(MXG2),
+     3                D00P(MXG2),D01P(MXG2),D10P(MXG2),D11P(MXG2),
+     4                NGANGB
+      COMMON /JMSGYH/ SQ(4)
+      COMMON /FQ04  / FQ(0:4),FQ0(5),FQ1(2,9),FQ2(3,9),FQ3(4,5),FQ4(5)
+      COMMON /KI2 / ACY,ACY2,AQX,AQX2,AQXY,Y03,Y04
+      COMMON /KI3 / R00(5,5),R01(3,40),R02(6,26),R03(10,8),R04(15)
+C
+      DIMENSION  WORK(9),FWK(10),FQW(6,9)
+C
+      PARAMETER (ZER=0.0D+00, F03=3.0D+00, F06=6.0D+00)
+C
+      IF(IKL.EQ. 0) THEN
+         DO I= 1, 5
+            R00(1,I)= ZER
+            R00(2,I)= ZER
+            R00(3,I)= ZER
+            R00(4,I)= ZER
+            R00(5,I)= ZER
+         ENDDO
+         DO I= 1,40
+            R01(1,I)= ZER
+            R01(2,I)= ZER
+            R01(3,I)= ZER
+         ENDDO
+         DO I= 1,26
+            R02(1,I)= ZER
+            R02(2,I)= ZER
+            R02(3,I)= ZER
+            R02(4,I)= ZER
+            R02(5,I)= ZER
+            R02(6,I)= ZER
+         ENDDO
+         DO I= 1, 8
+            DO J= 1,10
+               R03(J,I)= ZER
+            ENDDO
+         ENDDO
+         DO J= 1,15
+            R04(J)= ZER
+         ENDDO
+C
+         RETURN
+      ENDIF
+C
+      XMD2= X43 *0.5D+00
+      XMD3= XMD2*SQ(4)
+      XMDT= XMD3*XMD2
+C
+      XMDTY=-XMDT*ACY
+      XMDTX=-XMDT*AQX
+      XMDTXY=XMDT*AQXY
+C
+      WORK(1)=      SQ(1)
+      WORK(2)=-Y03 *SQ(2)
+      WORK(3)= Y04 *SQ(3)
+      WORK(4)=-Y03 *SQ(4)*Y04
+      WORK(5)= XMD3
+      WORK(6)= XMD2*SQ(2)
+      WORK(7)= XMD2*SQ(3)
+      WORK(8)=-XMD3*Y03
+      WORK(9)= XMD3*Y04
+C
+      DO 010 J= 1, 5
+         DO 010 I= 1, 5
+            R00(I,J)= R00(I,J)+FQ0(J)*WORK(I)
+  010 CONTINUE
+C
+      DO I= 1, 8
+         FQW(1,I)=-FQ1(1,I)*AQX
+         FQW(2,I)=-FQ1(1,I)*ACY
+         FQW(3,I)= FQ1(2,I)
+      ENDDO
+      TMP1= FQ1(1,5)*RAB +FQ1(1,8)
+      TMP2= FQ1(2,5)*RAB +FQ1(2,8)
+         FQW(1,9)=-TMP1*AQX
+         FQW(2,9)=-TMP1*ACY
+         FQW(3,9)= TMP2
+      DO I= 1, 4
+         R01(1,I)= R01(1,I)+FQW(1,1)*WORK(I+ 5)
+         R01(2,I)= R01(2,I)+FQW(2,1)*WORK(I+ 5)
+         R01(3,I)= R01(3,I)+FQW(3,1)*WORK(I+ 5)
+      ENDDO
+      DO I= 5, 8
+         R01(1,I)= R01(1,I)+FQW(1,2)*WORK(I+ 1)
+         R01(2,I)= R01(2,I)+FQW(2,2)*WORK(I+ 1)
+         R01(3,I)= R01(3,I)+FQW(3,2)*WORK(I+ 1)
+      ENDDO
+      DO I= 9,12
+         R01(1,I)= R01(1,I)+FQW(1,3)*WORK(I- 3)
+         R01(2,I)= R01(2,I)+FQW(2,3)*WORK(I- 3)
+         R01(3,I)= R01(3,I)+FQW(3,3)*WORK(I- 3)
+      ENDDO
+      DO I=13,16
+         R01(1,I)= R01(1,I)+FQW(1,4)*WORK(I- 7)
+         R01(2,I)= R01(2,I)+FQW(2,4)*WORK(I- 7)
+         R01(3,I)= R01(3,I)+FQW(3,4)*WORK(I- 7)
+      ENDDO
+      DO I=17,20
+         R01(1,I)= R01(1,I)+FQW(1,5)*WORK(I-11)
+         R01(2,I)= R01(2,I)+FQW(2,5)*WORK(I-11)
+         R01(3,I)= R01(3,I)+FQW(3,5)*WORK(I-11)
+      ENDDO
+      DO I=21,25
+         R01(1,I)= R01(1,I)+FQW(1,6)*WORK(I-20)
+         R01(2,I)= R01(2,I)+FQW(2,6)*WORK(I-20)
+         R01(3,I)= R01(3,I)+FQW(3,6)*WORK(I-20)
+      ENDDO
+      DO I=26,30
+         R01(1,I)= R01(1,I)+FQW(1,7)*WORK(I-25)
+         R01(2,I)= R01(2,I)+FQW(2,7)*WORK(I-25)
+         R01(3,I)= R01(3,I)+FQW(3,7)*WORK(I-25)
+      ENDDO
+      DO I=31,35
+         R01(1,I)= R01(1,I)+FQW(1,8)*WORK(I-30)
+         R01(2,I)= R01(2,I)+FQW(2,8)*WORK(I-30)
+         R01(3,I)= R01(3,I)+FQW(3,8)*WORK(I-30)
+      ENDDO
+      DO I=36,40
+         R01(1,I)= R01(1,I)+FQW(1,9)*WORK(I-35)
+         R01(2,I)= R01(2,I)+FQW(2,9)*WORK(I-35)
+         R01(3,I)= R01(3,I)+FQW(3,9)*WORK(I-35)
+      ENDDO
+C
+      DO I= 1, 5
+         R02(1,I)= R02(1,I)+(FQ2(1,I)*AQX2-FQ1(1,I))*XMDT
+         R02(2,I)= R02(2,I)+(FQ2(1,I)*ACY2-FQ1(1,I))*XMDT
+         R02(3,I)= R02(3,I)+(FQ2(3,I)     -FQ1(1,I))*XMDT
+         R02(4,I)= R02(4,I)+ FQ2(1,I)               *XMDTXY
+         R02(5,I)= R02(5,I)+ FQ2(2,I)               *XMDTX
+         R02(6,I)= R02(6,I)+ FQ2(2,I)               *XMDTY
+      ENDDO
+      TMP0= FQ1(1,5)*RAB +FQ1(1,8)
+      TMP1= FQ2(1,5)*RAB +FQ2(1,8)
+      TMP2= FQ2(2,5)*RAB +FQ2(2,8)
+      TMP3= FQ2(3,5)*RAB +FQ2(3,8)
+         FQW(1,5)= TMP1*AQX2-TMP0
+         FQW(2,5)= TMP1*ACY2-TMP0
+         FQW(3,5)= TMP3     -TMP0
+         FQW(4,5)= TMP1*AQXY
+         FQW(5,5)=-TMP2*AQX
+         FQW(6,5)=-TMP2*ACY
+      DO I= 6, 9
+         FQW(1,I)= FQ2(1,I)*AQX2-FQ1(1,I)
+         FQW(2,I)= FQ2(1,I)*ACY2-FQ1(1,I)
+         FQW(3,I)= FQ2(3,I)     -FQ1(1,I)
+         FQW(4,I)= FQ2(1,I)*AQXY
+         FQW(5,I)=-FQ2(2,I)*AQX
+         FQW(6,I)=-FQ2(2,I)*ACY
+      ENDDO
+      DO 220 I= 6, 9
+         DO 220 J= 1, 6
+            R02(J,I)= R02(J,I)+FQW(J,6)*WORK(I)
+  220 CONTINUE
+      DO 230 I=10,13
+         DO 230 J= 1, 6
+            R02(J,I)= R02(J,I)+FQW(J,7)*WORK(I-4)
+  230 CONTINUE
+      DO 240 I=14,17
+         DO 240 J= 1, 6
+            R02(J,I)= R02(J,I)+FQW(J,8)*WORK(I-8)
+  240 CONTINUE
+      DO 250 I=18,21
+         DO 250 J= 1, 6
+            R02(J,I)= R02(J,I)+FQW(J,5)*WORK(I-12)
+  250 CONTINUE
+      DO 260 I=22,26
+         DO 260 J= 1, 6
+            R02(J,I)= R02(J,I)+FQW(J,9)*WORK(I-21)
+  260 CONTINUE
+C
+      FQ2(1,5)= FQ2(1,5)*RAB +FQ2(1,8)
+      FQ2(2,5)= FQ2(2,5)*RAB +FQ2(2,8)
+      FQ3(1,1)= FQ3(1,1)*RAB +FQ3(1,4)
+      FQ3(2,1)= FQ3(2,1)*RAB +FQ3(2,4)
+      FQ3(3,1)= FQ3(3,1)*RAB +FQ3(3,4)
+      FQ3(4,1)= FQ3(4,1)*RAB +FQ3(4,4)
+      DO I= 1, 4
+         R03( 1,I)= R03( 1,I)+(FQ3(1,I)*AQX2-FQ2(1,I+4)*F03)*XMDTX
+         R03( 2,I)= R03( 2,I)+(FQ3(1,I)*AQX2-FQ2(1,I+4)    )*XMDTY
+         R03( 3,I)= R03( 3,I)+(FQ3(2,I)*AQX2-FQ2(2,I+4)    )*XMDT
+         R03( 4,I)= R03( 4,I)+(FQ3(1,I)*ACY2-FQ2(1,I+4)    )*XMDTX
+         R03( 5,I)= R03( 5,I)+ FQ3(2,I)                     *XMDTXY
+         R03( 6,I)= R03( 6,I)+(FQ3(3,I)     -FQ2(1,I+4)    )*XMDTX
+         R03( 7,I)= R03( 7,I)+(FQ3(1,I)*ACY2-FQ2(1,I+4)*F03)*XMDTY
+         R03( 8,I)= R03( 8,I)+(FQ3(2,I)*ACY2-FQ2(2,I+4)    )*XMDT
+         R03( 9,I)= R03( 9,I)+(FQ3(3,I)     -FQ2(1,I+4)    )*XMDTY
+         R03(10,I)= R03(10,I)+(FQ3(4,I)     -FQ2(2,I+4)*F03)*XMDT
+      ENDDO
+         FWK( 1)=-(FQ3(1,5)*AQX2-FQ2(1,9)*F03)*AQX
+         FWK( 2)=-(FQ3(1,5)*AQX2-FQ2(1,9)    )*ACY
+         FWK( 3)=  FQ3(2,5)*AQX2-FQ2(2,9)
+         FWK( 4)=-(FQ3(1,5)*ACY2-FQ2(1,9)    )*AQX
+         FWK( 5)=  FQ3(2,5)                   *AQXY
+         FWK( 6)=-(FQ3(3,5)     -FQ2(1,9)    )*AQX
+         FWK( 7)=-(FQ3(1,5)*ACY2-FQ2(1,9)*F03)*ACY
+         FWK( 8)=  FQ3(2,5)*ACY2-FQ2(2,9)
+         FWK( 9)=-(FQ3(3,5)     -FQ2(1,9)    )*ACY
+         FWK(10)=  FQ3(4,5)     -FQ2(2,9)*F03
+      DO 320 I= 5, 8
+         DO 320 J= 1,10
+            R03(J,I)= R03(J,I)+FWK(J)*WORK(I+ 1)
+  320 CONTINUE
+C
+      AQX4= AQX2*AQX2
+      ACY4= ACY2*ACY2
+      X2Y2= AQX2*ACY2
+      Q2C2= AQX2+ACY2
+      R04( 1)= R04( 1)+(FQ4(1)*AQX4-FQ3(1,5)*F06*AQX2
+     *                             +FQ2(1,9)*F03          )*XMDT
+      R04( 2)= R04( 2)+(FQ4(1)*AQX2-FQ3(1,5)*F03          )*XMDTXY
+      R04( 3)= R04( 3)+(FQ4(2)*AQX2-FQ3(2,5)*F03          )*XMDTX
+      R04( 4)= R04( 4)+(FQ4(1)*X2Y2-FQ3(1,5)*Q2C2+FQ2(1,9))*XMDT
+      R04( 5)= R04( 5)+(FQ4(2)*AQX2-FQ3(2,5)              )*XMDTY
+      R04( 6)= R04( 6)+(FQ4(3)*AQX2-FQ3(1,5)*AQX2-FQ3(3,5)
+     *                                           +FQ2(1,9))*XMDT
+      R04( 7)= R04( 7)+(FQ4(1)*ACY2-FQ3(1,5)*F03          )*XMDTXY
+      R04( 8)= R04( 8)+(FQ4(2)*ACY2-FQ3(2,5)              )*XMDTX
+      R04( 9)= R04( 9)+(FQ4(3)     -FQ3(1,5)              )*XMDTXY
+      R04(10)= R04(10)+(FQ4(4)     -FQ3(2,5)*F03          )*XMDTX
+      R04(11)= R04(11)+(FQ4(1)*ACY4-FQ3(1,5)*F06*ACY2
+     *                             +FQ2(1,9)*F03          )*XMDT
+      R04(12)= R04(12)+(FQ4(2)*ACY2-FQ3(2,5)*F03          )*XMDTY
+      R04(13)= R04(13)+(FQ4(3)*ACY2-FQ3(1,5)*ACY2-FQ3(3,5)
+     *                             +FQ2(1,9)              )*XMDT
+      R04(14)= R04(14)+(FQ4(4)     -FQ3(2,5)*F03          )*XMDTY
+      R04(15)= R04(15)+(FQ4(5)  -FQ3(3,5)*F06+FQ2(1,9)*F03)*XMDT
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK MCDV2
+C>
+C>    @brief   PSSS case
+C>
+C>    @details integration of a PSSS case
+C>
+      SUBROUTINE MCDV2(F,QX,QZ)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      DIMENSION F(4,4,4,4)
+C
+      COMMON /KI3 / R00(25),R01(3,40),R02(6,26),R03(10,8),R04(15)
+C
+      F(1,1,1,1)=           +R00(    1)
+      F(2,1,1,1)=+R01( 1, 1)+R00(    2)*QX
+      F(3,1,1,1)=+R01( 2, 1)
+      F(4,1,1,1)=+R01( 3, 1)+R00(    2)*QZ
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK MCDV3
+C>
+C>    @brief   PPSS case
+C>
+C>    @details integration of a PPSS case
+C>
+      SUBROUTINE MCDV3(F,QX,QZ)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      DIMENSION F(4,4,4,4)
+C
+      COMMON /KI3 / R00(25),R01(3,40),R02(6,26),R03(10,8),R04(15)
+C
+      F(1,1,1,1)=                      +R00(    1)
+      F(2,1,1,1)=            R01( 1, 1)+R00(    2)*QX
+      F(3,1,1,1)=            R01( 2, 1)
+      F(4,1,1,1)=            R01( 3, 1)+R00(    2)*QZ
+C
+      F(1,2,1,1)=            R01( 1, 2)+R00(    3)*QX
+      F(2,2,1,1)= R02( 1, 1)           +R00(    4)
+     *                    +(+R01( 1, 3)+R01( 1, 4)+R00(    5)*QX)*QX
+      F(3,2,1,1)= R02( 4, 1)+R01( 2, 4)*QX
+      F(4,2,1,1)= R02( 5, 1)+R01( 3, 4)*QX
+     *                    +(+R01( 1, 3)+R00(    5)*QX)*QZ
+C
+      F(1,3,1,1)=            R01( 2, 2)
+      F(2,3,1,1)= R02( 4, 1)+R01( 2, 3)*QX
+      F(3,3,1,1)= R02( 2, 1)           +R00(    4)
+      F(4,3,1,1)= R02( 6, 1)+R01( 2, 3)*QZ
+C
+      F(1,4,1,1)=            R01( 3, 2)+R00(    3)*QZ
+      F(2,4,1,1)= R02( 5, 1)+R01( 1, 4)*QZ
+     *                    +(+R01( 3, 3)+R00(    5)*QZ)*QX
+      F(3,4,1,1)= R02( 6, 1)+R01( 2, 4)*QZ
+      F(4,4,1,1)= R02( 3, 1)           +R00(    4)
+     *                    +(+R01( 3, 3)+R01( 3, 4)+R00(    5)*QZ)*QZ
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK MCDV4
+C>
+C>    @brief   PSPS case
+C>
+C>    @details integration of a PSPS case
+C>
+      SUBROUTINE MCDV4(F,QX,QZ)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      DIMENSION F(4,4,4,4)
+C
+      COMMON /KI3 / R00(25),R01(3,40),R02(6,26),R03(10,8),R04(15)
+C
+      F(1,1,1,1)=                      +R00(    1)
+      F(2,1,1,1)=           +R01( 1, 1)+R00(    2)*QX
+      F(3,1,1,1)=           +R01( 2, 1)
+      F(4,1,1,1)=           +R01( 3, 1)+R00(    2)*QZ
+C
+      F(1,1,2,1)=           -R01( 1, 2)
+      F(2,1,2,1)=-R02( 1, 1)-R01( 1, 4)*QX
+      F(3,1,2,1)=-R02( 4, 1)
+      F(4,1,2,1)=-R02( 5, 1)-R01( 1, 4)*QZ
+C
+      F(1,1,3,1)=           -R01( 2, 2)
+      F(2,1,3,1)=-R02( 4, 1)-R01( 2, 4)*QX
+      F(3,1,3,1)=-R02( 2, 1)
+      F(4,1,3,1)=-R02( 6, 1)-R01( 2, 4)*QZ
+C
+      F(1,1,4,1)=           -R01( 3, 2)+R00(    3)
+      F(2,1,4,1)=-R02( 5, 1)-R01( 3, 4)*QX
+     *                      +R01( 1, 3)+R00(    4)*QX
+      F(3,1,4,1)=-R02( 6, 1)+R01( 2, 3)
+      F(4,1,4,1)=-R02( 3, 1)-R01( 3, 4)*QZ
+     *                      +R01( 3, 3)+R00(    4)*QZ
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK MCDV5
+C>
+C>    @brief   PPPS case
+C>
+C>    @details integration of a PPPS case
+C>
+      SUBROUTINE MCDV5(F,QX,QZ)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      DIMENSION F(4,4,4,4)
+C
+      COMMON /KI3 / R00(25),R01(3,40),R02(6,26),R03(10,8),R04(15)
+C
+      DIMENSION             S01(13,3),S02( 6,6)
+Cjms
+C     Simplified calculation of F(I,J,K,L) for cases
+C     where:  I = 1..4,  J = 1..4,  K = 1..KX  and  L = 1..LX
+C     using auxiliary arrays B1, B2 and B3
+Cjms
+      PARAMETER      (KX=4,LX=1)
+      DIMENSION       B1(  5,KX,LX),B2(4,3,KX,LX),B3(  6,KX,LX)
+C
+      DIMENSION INS(KX,LX),INI(KX,LX),IND( 6,KX,LX)
+      DIMENSION IN6(6)
+      DATA INS/ 0, 0, 0, 1/
+      DATA INI/ 0, 0, 1, 1/
+      DATA IN6/ 1, 4, 5, 2, 6, 3/
+C
+      DO L=1,LX
+         DO K=1,KX
+            IJ= 0
+            IN= INS(K,L)
+            DO I=1,3
+               IN= IN+INI(K,L)
+               DO J=1,I
+                  IJ= IJ+1
+                  IN= IN+1
+                  IND(IJ,K,L)= IN
+               ENDDO
+            ENDDO
+         ENDDO
+      ENDDO
+      DO 101 J=1,13
+         DO 101 I=1, 3
+  101 S01(J,I)= R01(I,J)
+      DO 102 J=1, 6
+         DO 102 I=1, 6
+  102 S02(J,I)= R02(I,J)
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 1  and  L = 1
+Cjms
+      DO J=1,6
+         M= IN6(J)
+         B3(  J,1,1)=+R02( M,1)
+      ENDDO
+C
+      DO J=1,3
+         B2(1,J,1,1)=+S01( 1,J)
+         B2(2,J,1,1)=+S01( 2,J)
+         B2(3,J,1,1)=+S01( 3,J)
+         B2(4,J,1,1)=+S01( 4,J)
+      ENDDO
+C
+      DO I=1,5
+         B1(I  ,1,1)=+R00(I)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 2  and  L = 1
+Cjms
+      DO J=1,6
+         B3(  J,2,1)=-R03( J,1)
+      ENDDO
+C
+      DO J=1,3
+         M= IN6(J)
+         B2(1,J,2,1)=-S02( 3,M)
+         B2(2,J,2,1)=-S02( 4,M)
+         B2(3,J,2,1)=-S02( 5,M)
+         B2(4,J,2,1)=-S02( 6,M)
+      ENDDO
+C
+         J=1
+      DO I=1,5
+         B1(I  ,2,1)=-S01(I+ 8,J)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 3  and  L = 1
+Cjms
+      DO J=1,6
+         K= IND(J,3,1)
+         B3(  J,3,1)=-R03( K,1)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,3,1)
+         M= IN6(K)
+         B2(1,J,3,1)=-S02( 3,M)
+         B2(2,J,3,1)=-S02( 4,M)
+         B2(3,J,3,1)=-S02( 5,M)
+         B2(4,J,3,1)=-S02( 6,M)
+      ENDDO
+C
+         J=1
+         K= IND(J,3,1)
+      DO I=1,5
+         B1(I  ,3,1)=-S01(I+ 8,K)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 4  and  L = 1
+Cjms
+      DO J=1,6
+         K= IND(J,4,1)
+         M= IN6(J)
+         B3(  J,4,1)=-R03( K,1)+R02( M,2)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,4,1)
+         M= IN6(K)
+         B2(1,J,4,1)=-S02( 3,M)+S01( 5,J)
+         B2(2,J,4,1)=-S02( 4,M)+S01( 6,J)
+         B2(3,J,4,1)=-S02( 5,M)+S01( 7,J)
+         B2(4,J,4,1)=-S02( 6,M)+S01( 8,J)
+      ENDDO
+C
+         J=1
+         K= IND(J,4,1)
+      DO I=1,5
+         B1(I  ,4,1)=-S01(I+ 8,K)+R00(I+ 5)
+      ENDDO
+C
+      DO L=1,LX
+         DO K=1,KX
+C
+            F(1,1,K,L)=+B1(  1,K,L)
+            F(2,1,K,L)=+B2(1,1,K,L)+B1(  2,K,L)*QX
+            F(3,1,K,L)=+B2(1,2,K,L)
+            F(4,1,K,L)=+B2(1,3,K,L)+B1(  2,K,L)*QZ
+C
+            F(1,2,K,L)=+B2(2,1,K,L)+B1(  3,K,L)*QX
+            F(2,2,K,L)=+B3(  1,K,L)+B1(  5,K,L)
+     *               +(+B2(3,1,K,L)+B2(4,1,K,L)+B1(  4,K,L)*QX)*QX
+            F(3,2,K,L)=+B3(  2,K,L)+B2(4,2,K,L)*QX
+            F(4,2,K,L)=+B3(  3,K,L)+B2(4,3,K,L)*QX
+     *               +(+B2(3,1,K,L)+B1(  4,K,L)*QX)*QZ
+C
+            F(1,3,K,L)=+B2(2,2,K,L)
+            F(2,3,K,L)=+B3(  2,K,L)+B2(3,2,K,L)*QX
+            F(3,3,K,L)=+B3(  4,K,L)+B1(  5,K,L)
+            F(4,3,K,L)=+B3(  5,K,L)+B2(3,2,K,L)*QZ
+C
+            F(1,4,K,L)=+B2(2,3,K,L)+B1(  3,K,L)*QZ
+            F(2,4,K,L)=+B3(  3,K,L)+B2(4,1,K,L)*QZ
+     *               +(+B2(3,3,K,L)+B1(  4,K,L)*QZ)*QX
+            F(3,4,K,L)=+B3(  5,K,L)+B2(4,2,K,L)*QZ
+            F(4,4,K,L)=+B3(  6,K,L)+B1(  5,K,L)
+     *               +(+B2(3,3,K,L)+B2(4,3,K,L)+B1(  4,K,L)*QZ)*QZ
+C
+         ENDDO
+      ENDDO
+C
+      RETURN
+      END
+C*MODULE INT2B   *DECK MCDV6
+C>
+C>    @brief   PPPP case
+C>
+C>    @details integration of a PPPP case
+C>
+      SUBROUTINE MCDV6(F,QX,QZ)
+C
+      IMPLICIT DOUBLE PRECISION (A-H,O-Z)
+C
+      DIMENSION F(4,4,4,4)
+C
+      COMMON /KI3 / R00(25),R01(3,40),R02(6,26),R03(10,8),R04(15)
+C
+      DIMENSION             S01(40,3),S02(26,6),S03(8,10)
+C
+      LOGICAL   LSYM06
+Cjms
+C     Simplified calculation of F(I,J,K,L) for cases
+C     where:  I = 1..4,  J = 1..4,  K = 1..KX  and  L = 1..LX
+C     using auxiliary arrays B1, B2 and B3
+Cjms
+      PARAMETER      (KX=4,LX=4)
+      DIMENSION       B1(  5,KX,LX),B2(4,3,KX,LX),B3(  6,KX,LX)
+C
+      DIMENSION INS(KX,LX),INI(KX,LX),IND( 6,KX,LX)
+      DIMENSION IN6(6)
+      DATA INS/ 0, 0, 0, 1,  0, 0, 0, 1,  0, 0, 1, 2,  1, 1, 2, 3/
+      DATA INI/ 0, 0, 1, 1,  0, 0, 1, 1,  1, 1, 2, 2,  1, 1, 2, 2/
+      DATA IN6/ 1, 4, 5, 2, 6, 3/
+C
+      DO L=1,LX
+         DO K=1,KX
+            IJ= 0
+            IN= INS(K,L)
+            DO I=1,3
+               IN= IN+INI(K,L)
+               DO J=1,I
+                  IJ= IJ+1
+                  IN= IN+1
+                  IND(IJ,K,L)= IN
+               ENDDO
+            ENDDO
+         ENDDO
+      ENDDO
+      DO 101 J=1,40
+         DO 101 I=1, 3
+  101 S01(J,I)= R01(I,J)
+      DO 102 J=1,26
+         DO 102 I=1, 6
+  102 S02(J,I)= R02(I,J)
+      DO 103 J=1, 8
+         DO 103 I=1,10
+  103 S03(J,I)= R03(I,J)
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 1  and  L = 1
+Cjms
+      DO J=1,6
+         M= IN6(J)
+         B3(  J,1,1)=+R02( M,1)
+      ENDDO
+C
+      DO J=1,3
+         B2(1,J,1,1)=+S01( 1,J)
+         B2(2,J,1,1)=+S01( 2,J)
+         B2(3,J,1,1)=+S01( 3,J)
+         B2(4,J,1,1)=+S01( 4,J)
+      ENDDO
+C
+      DO I=1,5
+         B1(I  ,1,1)=+R00(I)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 2  and  L = 1
+Cjms
+      DO J=1,6
+         B3(  J,2,1)=-R03( J,2)
+      ENDDO
+C
+      DO J=1,3
+         M= IN6(J)
+         B2(1,J,2,1)=-S02( 6,M)
+         B2(2,J,2,1)=-S02( 7,M)
+         B2(3,J,2,1)=-S02( 8,M)
+         B2(4,J,2,1)=-S02( 9,M)
+      ENDDO
+C
+         J=1
+      DO I=1,5
+         B1(I  ,2,1)=-S01(I+20,J)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 3  and  L = 1
+Cjms
+      DO J=1,6
+         K= IND(J,3,1)
+         B3(  J,3,1)=-R03( K,2)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,3,1)
+         M= IN6(K)
+         B2(1,J,3,1)=-S02( 6,M)
+         B2(2,J,3,1)=-S02( 7,M)
+         B2(3,J,3,1)=-S02( 8,M)
+         B2(4,J,3,1)=-S02( 9,M)
+      ENDDO
+C
+         J=1
+         K= IND(J,3,1)
+      DO I=1,5
+         B1(I  ,3,1)=-S01(I+20,K)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 4  and  L = 1
+Cjms
+      DO J=1,6
+         K= IND(J,4,1)
+         M= IN6(J)
+         B3(  J,4,1)=-R03( K,2)+R02( M,2)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,4,1)
+         M= IN6(K)
+         B2(1,J,4,1)=-S02( 6,M)+S01( 5,J)
+         B2(2,J,4,1)=-S02( 7,M)+S01( 6,J)
+         B2(3,J,4,1)=-S02( 8,M)+S01( 7,J)
+         B2(4,J,4,1)=-S02( 9,M)+S01( 8,J)
+      ENDDO
+C
+         J=1
+         K= IND(J,4,1)
+      DO I=1,5
+         B1(I  ,4,1)=-S01(I+20,K)+R00(I+ 5)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 1  and  L = 2
+Cjms
+      DO J=1,6
+         B3(  J,1,2)=-R03( J,3)
+      ENDDO
+C
+      DO J=1,3
+         M= IN6(J)
+         B2(1,J,1,2)=-S02(10,M)
+         B2(2,J,1,2)=-S02(11,M)
+         B2(3,J,1,2)=-S02(12,M)
+         B2(4,J,1,2)=-S02(13,M)
+      ENDDO
+C
+         J=1
+      DO I=1,5
+         B1(I  ,1,2)=-S01(I+25,J)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 2  and  L = 2
+Cjms
+      DO J=1,6
+         M= IN6(J)
+         B3(  J,2,2)=+R04(   J)+R02( M,5)
+      ENDDO
+C
+      DO J=1,3
+         B2(1,J,2,2)=+S03( 5,J)+S01(17,J)
+         B2(2,J,2,2)=+S03( 6,J)+S01(18,J)
+         B2(3,J,2,2)=+S03( 7,J)+S01(19,J)
+         B2(4,J,2,2)=+S03( 8,J)+S01(20,J)
+      ENDDO
+C
+         J=1
+      DO I=1,5
+         B1(I  ,2,2)=+S02(I+21,J)+R00(I+20)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 3  and  L = 2
+Cjms
+      DO J=1,6
+         K= IND(J,3,2)
+         B3(  J,3,2)=+R04(   K)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,3,2)
+         B2(1,J,3,2)=+S03( 5,K)
+         B2(2,J,3,2)=+S03( 6,K)
+         B2(3,J,3,2)=+S03( 7,K)
+         B2(4,J,3,2)=+S03( 8,K)
+      ENDDO
+C
+         J=1
+         K= IND(J,3,2)
+         M= IN6(K)
+      DO I=1,5
+         B1(I  ,3,2)=+S02(I+21,M)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 4  and  L = 2
+Cjms
+      DO J=1,6
+         K= IND(J,4,2)
+         B3(  J,4,2)=+R04(   K)-R03( J,4)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,4,2)
+         M= IN6(J)
+         B2(1,J,4,2)=+S03( 5,K)-S02(14,M)
+         B2(2,J,4,2)=+S03( 6,K)-S02(15,M)
+         B2(3,J,4,2)=+S03( 7,K)-S02(16,M)
+         B2(4,J,4,2)=+S03( 8,K)-S02(17,M)
+      ENDDO
+C
+         J=1
+         K= IND(J,4,2)
+         M= IN6(K)
+      DO I=1,5
+         B1(I  ,4,2)=+S02(I+21,M)-S01(I+30,J)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 1  and  L = 3
+Cjms
+      DO J=1,6
+         K= IND(J,1,3)
+         B3(  J,1,3)=-R03( K,3)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,1,3)
+         M= IN6(K)
+         B2(1,J,1,3)=-S02(10,M)
+         B2(2,J,1,3)=-S02(11,M)
+         B2(3,J,1,3)=-S02(12,M)
+         B2(4,J,1,3)=-S02(13,M)
+      ENDDO
+C
+         J=1
+         K= IND(J,1,3)
+      DO I=1,5
+         B1(I  ,1,3)=-S01(I+25,K)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 2  and  L = 3
+C
+C     next statements commented because F(I,J,2,3)
+C     will be obtained at the end from  F(I,J,3,2)
+Cjms
+C     DO 323 J=1,6
+C 323 B3(  J,2,3)= B3(  J,3,2)
+C     DO 322 J=1,3
+C        DO 322 I=1,4
+C 322 B2(I,J,2,3)= B2(I,J,3,2)
+C        DO 321 I=1,5
+C 321 B1(I  ,2,3)= B1(I  ,3,2)
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 3  and  L = 3
+Cjms
+      DO J=1,6
+         K= IND(J,3,3)
+         M= IN6(J)
+         B3(  J,3,3)=+R04(   K)+R02( M,5)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,3,3)
+         B2(1,J,3,3)=+S03( 5,K)+S01(17,J)
+         B2(2,J,3,3)=+S03( 6,K)+S01(18,J)
+         B2(3,J,3,3)=+S03( 7,K)+S01(19,J)
+         B2(4,J,3,3)=+S03( 8,K)+S01(20,J)
+      ENDDO
+C
+         J=1
+         K= IND(J,3,3)
+         M= IN6(K)
+      DO I=1,5
+         B1(I  ,3,3)=+S02(I+21,M)+R00(I+20)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 4  and  L = 3
+Cjms
+      B3(  1,4,3)=+R04(    5)-R03( 2, 4)
+C
+      B3(  2,4,3)=+R04(    8)-R03( 4, 4)
+      B3(  3,4,3)=+R04(    9)-R03( 5, 4)
+C
+      B3(  4,4,3)=+R04(   12)-R03( 7, 4)
+      B3(  5,4,3)=+R04(   13)-R03( 8, 4)
+      B3(  6,4,3)=+R04(   14)-R03( 9, 4)
+C
+      B2(1,1,4,3)=+S03( 5, 5)-S02(14, 4)
+      B2(2,1,4,3)=+S03( 6, 5)-S02(15, 4)
+      B2(3,1,4,3)=+S03( 7, 5)-S02(16, 4)
+      B2(4,1,4,3)=+S03( 8, 5)-S02(17, 4)
+C
+      B2(1,2,4,3)=+S03( 5, 8)-S02(14, 2)
+      B2(2,2,4,3)=+S03( 6, 8)-S02(15, 2)
+      B2(3,2,4,3)=+S03( 7, 8)-S02(16, 2)
+      B2(4,2,4,3)=+S03( 8, 8)-S02(17, 2)
+      B2(1,3,4,3)=+S03( 5, 9)-S02(14, 6)
+      B2(2,3,4,3)=+S03( 6, 9)-S02(15, 6)
+      B2(3,3,4,3)=+S03( 7, 9)-S02(16, 6)
+      B2(4,3,4,3)=+S03( 8, 9)-S02(17, 6)
+C
+      DO I=1,5
+         B1(I  ,4,3)=+S02(I+21,6)-S01(I+30,2)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 1  and  L = 4
+Cjms
+      DO J=1,6
+         K= IND(J,1,4)
+         M= IN6(J)
+         B3(  J,1,4)=-R03( K,3)+R02( M,3)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,1,4)
+         M= IN6(K)
+         B2(1,J,1,4)=-S02(10,M)+S01( 9,J)
+         B2(2,J,1,4)=-S02(11,M)+S01(10,J)
+         B2(3,J,1,4)=-S02(12,M)+S01(11,J)
+         B2(4,J,1,4)=-S02(13,M)+S01(12,J)
+      ENDDO
+C
+         J=1
+         K= IND(J,1,4)
+      DO I=1,5
+         B1(I  ,1,4)=-S01(I+25,K)+R00(I+10)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 2  and  L = 4
+Cjms
+      DO J=1,6
+         K= IND(J,2,4)
+         B3(  J,2,4)=+R04(   K)-R03( J,1)
+      ENDDO
+C
+      DO J=1,3
+         K= IND(J,2,4)
+         M= IN6(J)
+         B2(1,J,2,4)=+S03( 5,K)-S02(18,M)
+         B2(2,J,2,4)=+S03( 6,K)-S02(19,M)
+         B2(3,J,2,4)=+S03( 7,K)-S02(20,M)
+         B2(4,J,2,4)=+S03( 8,K)-S02(21,M)
+      ENDDO
+C
+         J=1
+         K= IND(J,2,4)
+         M= IN6(K)
+      DO I=1,5
+         B1(I  ,2,4)=+S02(I+21,M)-S01(I+35,J)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 3  and  L = 4
+Cjms
+      B3(  1,3,4)=+R04(    5)-R03( 2, 1)
+C
+      B3(  2,3,4)=+R04(    8)-R03( 4, 1)
+      B3(  3,3,4)=+R04(    9)-R03( 5, 1)
+C
+      B3(  4,3,4)=+R04(   12)-R03( 7, 1)
+      B3(  5,3,4)=+R04(   13)-R03( 8, 1)
+      B3(  6,3,4)=+R04(   14)-R03( 9, 1)
+C
+      B2(1,1,3,4)=+S03( 5, 5)-S02(18, 4)
+      B2(2,1,3,4)=+S03( 6, 5)-S02(19, 4)
+      B2(3,1,3,4)=+S03( 7, 5)-S02(20, 4)
+      B2(4,1,3,4)=+S03( 8, 5)-S02(21, 4)
+C
+      B2(1,2,3,4)=+S03( 5, 8)-S02(18, 2)
+      B2(2,2,3,4)=+S03( 6, 8)-S02(19, 2)
+      B2(3,2,3,4)=+S03( 7, 8)-S02(20, 2)
+      B2(4,2,3,4)=+S03( 8, 8)-S02(21, 2)
+      B2(1,3,3,4)=+S03( 5, 9)-S02(18, 6)
+      B2(2,3,3,4)=+S03( 6, 9)-S02(19, 6)
+      B2(3,3,3,4)=+S03( 7, 9)-S02(20, 6)
+      B2(4,3,3,4)=+S03( 8, 9)-S02(21, 6)
+C
+      DO I=1,5
+         B1(I  ,3,4)=+S02(I+21,6)-S01(I+35,2)
+      ENDDO
+Cjms
+C     Auxiliary arrays to simplify the formulation of F(I,J,K,L)
+C     where:  I = 1..4,  J = 1..4,  K = 4  and  L = 4
+Cjms
+      B3(  1,4,4)=R04(    6)-S03( 1, 3)-S03( 4, 3)+S02( 4, 1)+S02( 5, 1)
+C
+      B3(  2,4,4)=R04(    9)-S03( 1, 5)-S03( 4, 5)+S02( 4, 4)+S02( 5, 4)
+      B3(  3,4,4)=R04(   10)-S03( 1, 6)-S03( 4, 6)+S02( 4, 5)+S02( 5, 5)
+C
+      B3(  4,4,4)=R04(   13)-S03( 1, 8)-S03( 4, 8)+S02( 4, 2)+S02( 5, 2)
+      B3(  5,4,4)=R04(   14)-S03( 1, 9)-S03( 4, 9)+S02( 4, 6)+S02( 5, 6)
+      B3(  6,4,4)=R04(   15)-S03( 1,10)-S03( 4,10)+S02( 4, 3)+S02( 5, 3)
+C
+      B2(1,1,4,4)=S03( 5, 6)-S02(14, 5)-S02(18, 5)+S01(13, 1)+S01(17, 1)
+      B2(2,1,4,4)=S03( 6, 6)-S02(15, 5)-S02(19, 5)+S01(14, 1)+S01(18, 1)
+      B2(3,1,4,4)=S03( 7, 6)-S02(16, 5)-S02(20, 5)+S01(15, 1)+S01(19, 1)
+      B2(4,1,4,4)=S03( 8, 6)-S02(17, 5)-S02(21, 5)+S01(16, 1)+S01(20, 1)
+C
+      B2(1,2,4,4)=S03( 5, 9)-S02(14, 6)-S02(18, 6)+S01(13, 2)+S01(17, 2)
+      B2(2,2,4,4)=S03( 6, 9)-S02(15, 6)-S02(19, 6)+S01(14, 2)+S01(18, 2)
+      B2(3,2,4,4)=S03( 7, 9)-S02(16, 6)-S02(20, 6)+S01(15, 2)+S01(19, 2)
+      B2(4,2,4,4)=S03( 8, 9)-S02(17, 6)-S02(21, 6)+S01(16, 2)+S01(20, 2)
+      B2(1,3,4,4)=S03( 5,10)-S02(14, 3)-S02(18, 3)+S01(13, 3)+S01(17, 3)
+      B2(2,3,4,4)=S03( 6,10)-S02(15, 3)-S02(19, 3)+S01(14, 3)+S01(18, 3)
+      B2(3,3,4,4)=S03( 7,10)-S02(16, 3)-S02(20, 3)+S01(15, 3)+S01(19, 3)
+      B2(4,3,4,4)=S03( 8,10)-S02(17, 3)-S02(21, 3)+S01(16, 3)+S01(20, 3)
+C
+      DO I=1,5
+         B1(I  ,4,4)=+S02(I+21,3)-S01(I+30,3)-S01(I+35,3)
+     *                           +R00(I+15)  +R00(I+20)
+      ENDDO
+C
+      LSYM06=(KX.EQ.4 .AND. LX.EQ.4)
+      DO L=1,LX
+         DO K=1,KX
+C
+            IF(LSYM06) THEN
+               IF(K.EQ.2 .AND. L.EQ.3) GO TO 001
+            ENDIF
+C
+            F(1,1,K,L)=+B1(  1,K,L)
+            F(2,1,K,L)=+B2(1,1,K,L)+B1(  2,K,L)*QX
+            F(3,1,K,L)=+B2(1,2,K,L)
+            F(4,1,K,L)=+B2(1,3,K,L)+B1(  2,K,L)*QZ
+C
+            F(1,2,K,L)=+B2(2,1,K,L)+B1(  3,K,L)*QX
+            F(2,2,K,L)=+B3(  1,K,L)+B1(  5,K,L)
+     *               +(+B2(3,1,K,L)+B2(4,1,K,L)+B1(  4,K,L)*QX)*QX
+            F(3,2,K,L)=+B3(  2,K,L)+B2(4,2,K,L)*QX
+            F(4,2,K,L)=+B3(  3,K,L)+B2(4,3,K,L)*QX
+     *               +(+B2(3,1,K,L)+B1(  4,K,L)*QX)*QZ
+C
+            F(1,3,K,L)=+B2(2,2,K,L)
+            F(2,3,K,L)=+B3(  2,K,L)+B2(3,2,K,L)*QX
+            F(3,3,K,L)=+B3(  4,K,L)+B1(  5,K,L)
+            F(4,3,K,L)=+B3(  5,K,L)+B2(3,2,K,L)*QZ
+C
+            F(1,4,K,L)=+B2(2,3,K,L)+B1(  3,K,L)*QZ
+            F(2,4,K,L)=+B3(  3,K,L)+B2(4,1,K,L)*QZ
+     *               +(+B2(3,3,K,L)+B1(  4,K,L)*QZ)*QX
+            F(3,4,K,L)=+B3(  5,K,L)+B2(4,2,K,L)*QZ
+            F(4,4,K,L)=+B3(  6,K,L)+B1(  5,K,L)
+     *               +(+B2(3,3,K,L)+B2(4,3,K,L)+B1(  4,K,L)*QZ)*QZ
+C
+  001       CONTINUE
+         ENDDO
+      ENDDO
+C
+      IF(.NOT.LSYM06) GO TO 060
+      DO J=1,4
+         DO I=1,4
+            F(I,J,2,3)= F(I,J,3,2)
+         ENDDO
+      ENDDO
+  060 CONTINUE
+C
+      RETURN
+      END
