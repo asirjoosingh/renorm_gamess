@@ -1208,7 +1208,7 @@ set STANDARD_GAMESS_OBJ3=(optcix.o ordint.o ormas1.o ormpt2.o \
       pcmdis.o pcmief.o pcmpol.o pcmvch.o  \
       prpamm.o prpel.o  prplib.o prppop.o  \
       qeigen.o qfmm.o   qmfm.o   qrel.o   quanpo.o  \
-      raman.o  rhfuhf.o ricab.o  riint.o  rimp2.o  \
+      raman.o  renorm.o rnmint.o rhfuhf.o ricab.o  riint.o  rimp2.o  \
       roeom.o  rohfcc.o rxncrd.o ryspol.o  \
       scflib.o scfmi.o  scrf.o   sfdft.o  sfgrad.o  \
       sobrt.o  soffac.o solib.o  sozeff.o  \

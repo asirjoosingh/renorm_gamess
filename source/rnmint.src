@@ -1,0 +1,341 @@
+
+C*********************************************************************************
+      subroutine Ovlap2P1G(I1,J1,K1,alp1,A1,
+     x                     I2,J2,K2,alp2,A2,
+     *                     L1,M1,N1,beta1,B1,
+     *                     L2,M2,N2,beta2,B2,
+     *                     gamm,ans)
+C
+C Evaluates < \Phi_1 \Phi_2 | g(r1-r2) | \Phi_1 \Phi_2 >_r1r2
+C
+C ---------------- References -------------------------------
+C
+C    Mcmurchie & Davidson, J. Comput. Phys. 26, 218 (1978)
+C
+C    Persson & Taylor, Theor. Chem. Acc. 97, 240 (1997)
+C
+C -----------------------------------------------------------
+C 
+C*********************************************************************************
+      implicit none
+
+      integer, intent(in) :: I1,J1,K1
+      integer, intent(in) :: I2,J2,K2
+      integer, intent(in) :: L1,M1,N1
+      integer, intent(in) :: L2,M2,N2
+      real*8, intent(in)  :: alp1,beta1
+      real*8, intent(in)  :: alp2,beta2
+      real*8, intent(in)  :: gamm
+      real*8, intent(in), dimension(3) :: A1,B1
+      real*8, intent(in), dimension(3) :: A2,B2
+
+      real*8, intent(out) :: ans
+
+      integer              :: t1,u1,v1
+      integer              :: t2,u2,v2
+      real*8               :: p1,q1
+      real*8               :: p2,q2
+      real*8               :: s,q,pref,Eherm
+      real*8               :: xderiv,yderiv,zderiv
+      real*8               :: shiftfac,totsum
+      real*8               :: pi
+      real*8, dimension(3) :: P1mat,Q1mat
+      real*8, dimension(3) :: P2mat,Q2mat
+      real*8, dimension(3) :: xKab1,xKab2
+      real*8, allocatable  :: Ei1l1(:),Ei2l2(:)
+      real*8, allocatable  :: Ej1m1(:),Ej2m2(:)
+      real*8, allocatable  :: Ek1n1(:),Ek2n2(:)
+
+      pi=4.0d0*datan(1.0d0)
+
+C Generate overlap distributions for electron 1 (centred on P1==P)
+C p1 == p, q1 == q
+      allocate(Ei1l1(0:I1+L1),Ej1m1(0:J1+M1),Ek1n1(0:K1+N1))
+      call ovlapdistr(I1,L1,alp1,beta1,A1,B1,p1,q1,
+     *             P1mat(1),Q1mat(1),xKab1(1),Ei1l1)
+      call ovlapdistr(J1,M1,alp1,beta1,A1,B1,p1,q1,
+     *             P1mat(2),Q1mat(2),xKab1(2),Ej1m1)
+      call ovlapdistr(K1,N1,alp1,beta1,A1,B1,p1,q1,
+     *             P1mat(3),Q1mat(3),xKab1(3),Ek1n1)
+
+C Generate overlap distributions for electron 2 (centred on P2==P)
+C p2 == p', q2 == q'
+      allocate(Ei2l2(0:I2+L2),Ej2m2(0:J2+M2),Ek2n2(0:K2+N2))
+      call ovlapdistr(I2,L2,alp2,beta2,A2,B2,p2,q2,
+     *             P2mat(1),Q2mat(1),xKab2(1),Ei2l2)
+      call ovlapdistr(J2,M2,alp2,beta2,A2,B2,p2,q2,
+     *             P2mat(2),Q2mat(2),xKab2(2),Ej2m2)
+      call ovlapdistr(K2,N2,alp2,beta2,A2,B2,p2,q2,
+     *             P2mat(3),Q2mat(3),xKab2(3),Ek2n2)
+
+C Calculate numerical prefactor for integral over spherical Gaussians
+C c.f. [Persson] Eq. 70
+      pref=pi*pi/(p1*p2+p1*gamm+p2*gamm)
+      pref=dsqrt(pref*pref*pref)
+
+C Calculate parameters for Gaussian function (KPC)
+C c.f. [Persson] Eq. 71
+      q=p1*p2*gamm/(p1*p2+p1*gamm+p2*gamm)
+
+      totsum=0.0d0
+
+C Loop over hermite integrals
+C [Persson] Eq. 34 analogue
+      do t1=0,i1+l1
+      do u1=0,j1+m1
+      do v1=0,k1+n1
+
+      do t2=0,i2+l2
+      do u2=0,j2+m2
+      do v2=0,k2+n2
+
+C Calculate Hermite expansion coefficient appearing in [Persson] Eq. 34
+        Eherm=Ei1l1(t1)*Ei2l2(t2)*
+     x        Ej1m1(u1)*Ej2m2(u2)*
+     x        Ek1n1(v1)*Ek2n2(v2)
+
+        if (mod(t2+u2+v2,2).eq.0) then
+         shiftfac=1.0d+00
+        else
+         shiftfac=-1.0d+00
+        end if
+
+C Take derivative of KPC (Gaussian function) directly
+        call gderiv_Ax(t1+t2,P2mat(1),q,P1mat(1),xderiv)
+        call gderiv_Ax(u1+u2,P2mat(2),q,P1mat(2),yderiv)
+        call gderiv_Ax(v1+v2,P2mat(3),q,P1mat(3),zderiv)
+
+        totsum=totsum+Eherm*shiftfac*xderiv*yderiv*zderiv
+
+      end do
+      end do
+      end do
+
+      end do
+      end do
+      end do
+
+      ans=totsum*pref
+
+      deallocate(Ei1l1,Ei2l2)
+      deallocate(Ej1m1,Ej2m2)
+      deallocate(Ek1n1,Ek2n2)
+
+      return
+      end subroutine Ovlap2P1G
+
+
+C*********************************************************************************
+      subroutine OnePartOvlap(I1,J1,K1,alp1,A1,L1,M1,N1,beta1,B1,ans)
+C
+C Evaluates < f(1) | g(1) >
+C
+C*********************************************************************************
+
+      implicit none
+
+      integer*8, intent(in) :: I1,J1,K1
+      integer*8, intent(in) :: L1,M1,N1
+      real*8, intent(in)  :: alp1,beta1
+      real*8, intent(in), dimension(3) :: A1,B1
+
+      real*8, intent(out) :: ans
+
+      integer*8            :: t1,u1,v1
+      real*8               :: p1,q1
+      real*8               :: pref,Eherm
+      real*8               :: pi
+      real*8, dimension(3) :: P1mat,Q1mat
+      real*8, dimension(3) :: xKab1
+      real*8 :: Ei1l1(0:I1+L1),Ej1m1(0:J1+M1),Ek1n1(0:K1+N1)
+
+      pi=4.0d0*datan(1.0d0)
+
+C Generate overlap distributions for electron 1 (centred on P1==P)
+C p1 == p, q1 == q
+C      allocate(Ei1l1(0:I1+L1),Ej1m1(0:J1+M1),Ek1n1(0:K1+N1))
+      call ovlapdistr(I1,L1,alp1,beta1,A1(1),B1(1),p1,q1,
+     *             P1mat(1),Q1mat(1),xKab1(1),Ei1l1)
+      call ovlapdistr(J1,M1,alp1,beta1,A1(2),B1(2),p1,q1,
+     *             P1mat(2),Q1mat(2),xKab1(2),Ej1m1)
+      call ovlapdistr(K1,N1,alp1,beta1,A1(3),B1(3),p1,q1,
+     *             P1mat(3),Q1mat(3),xKab1(3),Ek1n1)
+
+C Calculate prefactor
+      pref=pi/p1
+      pref=dsqrt(pref*pref*pref)
+
+C Calculate Hermite expansion coefficient appearing in [Persson] Eq. 34
+      Eherm=Ei1l1(0)*Ej1m1(0)*Ek1n1(0)
+
+      ans=pref*Eherm
+
+      return
+      end subroutine OnePartOvlap
+
+
+      subroutine ovlapdistr(i,j,a,b,Acoord,Bcoord,
+     *                      p,q,Pcoord,Qcoord,KABcoord,Eijt)
+
+C Calculate 1-D overlap density of two Gaussian-type orbitals
+C Gi(x)=x^i exp(-a*(x-Ax)^2) and Gj(x)=x^j exp(-b*(x-Bx)^2)
+C
+C See [Persson] Eqs. 1-17 and discussions in between
+
+      implicit none
+
+      integer, intent(in) :: i,j
+      real*8, intent(in)  :: a,b,Acoord,Bcoord
+
+      real*8, intent(out) :: p,q,Pcoord,Qcoord,KABcoord
+      real*8, dimension(0:i+j), intent(out) :: Eijt
+
+      p=a+b
+      q=a*b/(a+b)
+      Pcoord=(a*Acoord+b*Bcoord)/(a+b)
+      Qcoord=Acoord-Bcoord
+      KABcoord=dexp(-q*Qcoord*Qcoord)
+
+      call calcEijt(i,j,a,b,p,q,Qcoord,KABcoord,Eijt)
+
+      return
+      end subroutine ovlapdistr
+
+
+      subroutine calcEijt(imax,jmax,a,b,p,q,Qcoord,E0,Eijt)
+
+C Calculates E_t^{ij} for t=0,...,i+j using recursion relations in [Persson]
+C c.f. [Persson] Eqs. 16-17
+
+      implicit none
+
+      integer, intent(in) :: imax, jmax
+      real*8, intent(in)  :: a,b,p,q,Qcoord,E0
+
+      real*8, dimension(0:imax+jmax), intent(out) :: Eijt
+
+      integer :: i, j, t
+      real*8  :: coeff1,coeff2i,coeff2j,coeff3
+      real*8, dimension(0:imax,0:jmax,0:imax+jmax) :: E
+
+C Initialize since E_t^{ij} = 0 \forall t > i+j
+      do i=0,imax
+      do j=0,jmax
+      do t=0,imax+jmax
+       E(i,j,t)=0.0d0
+      end do
+      end do
+      end do
+
+C Calculate coefficients for recursion relations
+      coeff1=1.0d0/(2.0d0*p)
+      coeff2i=-q*Qcoord/a
+      coeff2j=q*Qcoord/b
+
+C Set initial value to K_AB
+      E(0,0,0)=E0
+
+C Calculate E(i,0,t) by incrementing i, then incrementing t to the maximum nonzero entry (t=i)
+      j=0
+      do i=0,imax-1
+       E(i+1,j,0)=coeff2i*E(i,j,0)+E(i,j,1)
+       do t=1,i
+        coeff3=dble(t+1)
+        E(i+1,j,t)=coeff1*E(i,j,t-1)+coeff2i*E(i,j,t)+coeff3*E(i,j,t+1)
+       end do
+       E(i+1,j,i+1)=coeff1*E(i,j,i)+coeff2i*E(i,j,i+1)
+      end do
+
+C Calculate E(i,j,t) for each i by incrementing j, then t to the maximum nonzero entry (t=i+j)
+      do i=0,imax
+       do j=0,jmax-1
+        E(i,j+1,0)=coeff2j*E(i,j,0)+E(i,j,1)
+        do t=1,i+j
+         coeff3=dble(t+1)
+         E(i,j+1,t)=coeff1*E(i,j,t-1)+coeff2j*E(i,j,t)+coeff3*E(i,j,t+1)
+        end do
+        E(i,j+1,i+j+1)=coeff1*E(i,j,i+j)+coeff2j*E(i,j,i+j+1)
+       end do
+      end do
+
+C Generate output
+      do t=0,imax+jmax
+        Eijt(t)=E(imax,jmax,t)
+      end do
+
+      return
+      end subroutine calcEijt
+
+
+      subroutine gderiv_Ax(N,x,alp,Ax,gderAx)
+
+C This routine computes the derivative of Gaussian func
+C               d     
+C     gd0   = (---)^N Exp[-alp*(x-Ax)^2]
+C              dAx    
+C
+C using substitution
+C     y = sqrt(alp)*(x-Ax)
+C
+C properties of Hermite polynomials
+C     (d^N/dy^N) Exp[-y^2] = (-1)^N * H_n(y) * Exp[-y^2]
+C
+C and chain rule since dy/dAx is constant
+
+      implicit none
+
+      integer, intent(in) :: N
+      real*8, intent(in)  :: x,alp,Ax
+      real*8, intent(out) :: gderAx
+
+      real*8 :: y,dy,de,HermiteH
+
+C Leave out (-1)^N factors from dy and de since they cancel with each other
+
+C y and its Nth derivative wrt Ax
+      y=dsqrt(alp)*(x-Ax)
+      dy=(dsqrt(alp))**N
+     
+C Nth derivative of Exp[-y^2] wrt y
+      de=HermiteH(N,y)*dexp(-y*y)
+
+      gderAx=dy*de
+
+      return
+      end subroutine gderiv_Ax
+
+
+      function HermiteH(n,x)
+
+C Returns H_n(x) where H_n is the nth Hermite polynomial
+C H_n(x) = (-1)^n * Exp[x^2] * (d^n/dx^n) Exp[-x^2]
+
+      implicit none
+
+      integer, intent(in) :: n
+      real*8, intent(in)  :: x
+
+      real*8 :: HermiteH
+
+      integer :: i
+      real*8  :: H(0:n)
+
+      H(0) = 1.0d0
+
+      if (n.gt.0) then
+       H(1) = 2.0d0*x
+
+       if (n.gt.1) H(2) = (4.0d0*x*x)-2.0d0
+
+       do i=2,n-1
+          H(i+1)=(2.0d0*x*H(i))-(2.0d0*dble(i)*H(i-1))
+       end do
+
+      end if
+
+      HermiteH = H(n)
+
+      return
+      end function HermiteH
+
+

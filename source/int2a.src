@@ -1992,11 +1992,15 @@ C
       IF (JC.LT.2) GO TO 100
       JC = 0
       IF (MASWRK) WRITE (IW,9088)
-     *   (J1(M),J2(M),J3(M),J4(M),Q(M),V(M),M = 1,2)
+C ARS( add output
+     *   (J1(M),J2(M),J3(M),J4(M),Q(M),N1(M),V(M),M = 1,2)
+C )
   100 CONTINUE
       RETURN
 C
- 9088 FORMAT(2(4I4,F5.1,F17.9,1X))
+C ARS( add output
+ 9088 FORMAT(2(4I4,F5.1,1X,I4,1X,F17.9,1X))
+C )
       END
 C*MODULE INT2A   *DECK JANDK
 !> @brief Compute 2-electron integrals
@@ -3275,6 +3279,9 @@ C  FOR RYS QUADRATURE CODE
 C
       LOGICAL LSHEL
       COMMON /FMCOM /XX(1)
+C ARS(
+      COMMON /RENORM/ IRNORM,RNCUT,RNCOF1
+C )
 C
 C  FOR ERIC CODE, BUT ALL CODES MUST SET ERIOUT FOR OUTPUT ROUTINES
 C
@@ -3486,8 +3493,15 @@ C
         IDDIJ = LOADFM + 1
         NEED  = 49*MXG2
         CALL GETFM(NEED)
-        CALL SHELLS(1,ISH,JSH,KSH,LSH,.TRUE.)
-        CALL SHELLS(2,ISH,JSH,KSH,LSH,.TRUE.)
+C ARS( do not permute shells if renormalization calculation
+        IF(IRNORM) THEN
+           CALL SHELLS(1,ISH,JSH,KSH,LSH,.FALSE.)
+           CALL SHELLS(2,ISH,JSH,KSH,LSH,.FALSE.)
+        ELSE
+           CALL SHELLS(1,ISH,JSH,KSH,LSH,.TRUE.)
+           CALL SHELLS(2,ISH,JSH,KSH,LSH,.TRUE.)
+        END IF
+C )
         CALL IJPRIM(XX(IDDIJ))
         NORGH = NORGSH(IEXCH)
         IF(NOPK.NE.0) CALL ZQOUT(GHONDO)
@@ -3497,6 +3511,19 @@ C
            CALL GENRAL(GHONDO(1+NORGH),XX(IDDIJ))
         END IF
         CALL RETFM(NEED)
+C
+C ARS( calculate overlap integral correction and add to erf integral
+        IF(IRNORM) THEN
+C MODIFY MEMORY CALL ONCE HIGHER ANGULAR MOMENTUM IS WORKING
+           CALL VALFM(LOADFM)
+           IRN2EI = LOADFM + 1
+           NEED   = MXG2
+           CALL GETFM(NEED)
+           CALL RENORMINT(ISH,JSH,KSH,LSH,XX(IRN2EI))
+           GHONDO(1+NORGH)=GHONDO(1+NORGH)+XX(IRN2EI)
+           CALL RETFM(NEED)
+        END IF
+C )
         RETURN
 C       ******
 C
