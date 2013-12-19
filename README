@@ -1,0 +1,7 @@
+
+Modified version of GAMESS 2013 including capability for calculations using the renormalization theory of Lepage.
+
+The comments in the input routine in renorm.src should serve to guide the user to variable conventions.
+
+An example input file is given in tests/renorm/
+
