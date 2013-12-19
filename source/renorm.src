@@ -6,6 +6,7 @@ C
       LOGICAL GOPARR,DSKWRK,MASWRK
       LOGICAL LCFLAG,LRINT
       PARAMETER (NNAM=3)
+      PARAMETER (SQRT2=1.4142135623730951D+00)     ! 2^(1/2)
       DIMENSION QNAM(NNAM),KQNAM(NNAM),RENORM(1)
 C
       COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
@@ -21,8 +22,8 @@ C
 C -------------------  RENORMALIZATION INPUT BLOCK  -------------------
 C
 C     IRNORM=0,1  SET TO 1 TO USE RENORMALIZATION
-C     RNCUT       CUTOFF PARAMETER RC IN RENORMALIZED POT ERF(R/RC)
-C     RNCOF1      COEFFICIENT IN FRONT OF FIRST CORRECTION TERM
+C     RNCUT       CUTOFF PARAM RC IN RENORMLZD POT ERF(R/(SQRT(2)RC))/R
+C     RNCOF1      COEFF C IN FRONT OF FIRST CORRECTION TERM C*RC**2
 C
 C ---------------------------------------------------------------------
 C
@@ -66,7 +67,7 @@ C  SET INTEGRAL FILE TO NORMAL TWO ELEC INTEGRAL FILE (8)
 C
       LCFLAG = .FALSE.
       LRINT  = .TRUE.
-      EMU    = 1.0D0/RNCUT
+      EMU    = 1.0D0/(SQRT2*RNCUT)
       EMU2   = EMU*EMU
       LRFILE = 8
 C
@@ -83,13 +84,16 @@ C*MODULE RENORM *DECK RENORMINT
 C
       IMPLICIT DOUBLE PRECISION(A-H,O-Z)
 C
-      PARAMETER (ZERO=0.0D+00)
+      PARAMETER (ZERO=0.0D+00,ONE=1.0D+00,TWO=2.0D+00)
+      PARAMETER (TWOPI32=15.749609945722419D+00)      ! (2pi)^(3/2)
       PARAMETER (MXSH=5000, MXGTOT=20000, MXATM=2000)
+      PARAMETER (MXGSH=30)
       LOGICAL GOPARR,DSKWRK,MASWRK
       LOGICAL LCFLAG,LRINT
+      LOGICAL RNMDBG
       DIMENSION IA(3),JA(3),KKA(3),LA(3)
       DIMENSION A1(3),A2(3),B1(3),B2(3)
-      DIMENSION RNINT(MXSH)
+      DIMENSION RNINT(*)
 C
       COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
      *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
@@ -113,6 +117,8 @@ C     *                 GD(MXGSH),CSD(MXGSH),CPD(MXGSH),CDD(MXGSH),
 C     *                CFD(MXGSH),CGD(MXGSH),CHD(MXGSH),CID(MXGSH),
 C     *                AX,AY,AZ,BX,BY,BZ,RAB,CX,CY,CZ,DX,DY,DZ,RCD,
 C     *                NGA,NGB,NGC,NGD
+C
+      RNMDBG=.FALSE.
 C
 C TRANSFER BASIS SET INFORMATION TO RNPRM COMMON BLOCK FOR EACH SHELL
 C
@@ -214,7 +220,7 @@ C
       LEND=LSTART+LNPRIM-1 ! loc of last prim of L shell in NSHEL vars
       LTYPE=KTYPE(LSH)     ! type of shell (S=1,P=2,...)
       DO LL=LSTART,LEND
-         EXPL(LL-LSTART+1)=EX(L)
+         EXPL(LL-LSTART+1)=EX(LL)
          IF(LTYPE.EQ.1) THEN
             COFL(LL-LSTART+1)=CS(LL)
          ELSE IF(LTYPE.EQ.2) THEN     !!!!  FIX FOR  !!!!
@@ -238,14 +244,14 @@ CCC        CXA = CONTR COEFFS OF ALL X PRIMS IN I SHELL, X=S,P,...
 CCC   AX,AY,AZ = COORDINATES OF ATOM CONTAINING I SHELL
 CCC        NGA = NUMBER OF PRIMS IN I SHELL
 CCC   'B' VARIABLES CORRESPOND TO J SHELL
-CCC   'C' VARIABLES CORRESPOND TO J SHELL
-CCC   'D' VARIABLES CORRESPOND TO J SHELL
-
-
+CCC   'C' VARIABLES CORRESPOND TO K SHELL
+CCC   'D' VARIABLES CORRESPOND TO L SHELL
 C
 C CALCULATE INTEGRALS
 C
-      GAMM=RNCUT*RNCUT
+      RNCUT2=RNCUT*RNCUT
+      GAMM=ONE/(TWO*RNCUT2)
+      COEF=RNCOF1/(TWOPI32*RNCUT)
 C
       SUMINT=ZERO
 C
@@ -264,18 +270,18 @@ C PRIMITIVE INFO FROM I SHELL MEMBER
          A1=IA
 C
 C PRIMITIVE INFO FROM J SHELL MEMBER
-         I2=JTYPE-1
-         J2=JTYPE-1
-         K2=JTYPE-1
-         ALP2=EXPJ(JJ)
-         A2=JA
+         L1=JTYPE-1
+         M1=JTYPE-1
+         N1=JTYPE-1
+         BET1=EXPJ(JJ)
+         B1=JA
 C
 C PRIMITIVE INFO FROM K SHELL MEMBER
-         L1=KKTYPE-1
-         M1=KKTYPE-1
-         N1=KKTYPE-1
-         BET1=EXPK(KK)
-         B1=KKA
+         I2=KKTYPE-1
+         J2=KKTYPE-1
+         K2=KKTYPE-1
+         ALP2=EXPK(KK)
+         A2=KKA
 C
 C PRIMITIVE INFO FROM L SHELL MEMBER
          L2=LTYPE-1
@@ -288,8 +294,15 @@ C CALCULATE PRIMITIVE INTEGRAL
          CALL OVLAP2P1G(I1,J1,K1,ALP1,A1,
      x                  I2,J2,K2,ALP2,A2,
      x                  L1,M1,N1,BET1,B1,
-     x                  L2,M2,N2,BET1,B2,
+     x                  L2,M2,N2,BET2,B2,
      x                  GAMM,PRIMINT)
+C FOR TESTING (
+C         CALL GFVEE(I1,J1,K1,ALP1,A1,
+C     x              I2,J2,K2,ALP2,A2,
+C     x              L1,M1,N1,BET1,B1,
+C     x              L2,M2,N2,BET2,B2,
+C     x              PRIMINT)
+C )
 C
          SUMINT=SUMINT+COFI(II)*COFJ(JJ)*COFK(KK)*COFL(LL)*PRIMINT
 C
@@ -299,8 +312,27 @@ C
       END DO
 C
 C CURRENTLY ONLY FOR S FUNCTIONS
-      RNINT(1)=RNCOF1*SUMINT
+      RNINT(1)=COEF*SUMINT
 C
+C ARS(
+      IF (RNMDBG) THEN
+         WRITE(*,*) "--------------------------------------------------"
+         WRITE(*,*) "I SHELL:",ISH
+         WRITE(*,*) "  NPRIM:",INPRIM,NGA
+         WRITE(*,*) "    EXP:",EXPI(1),GA(1)
+         WRITE(*,*) "J SHELL:",JSH
+         WRITE(*,*) "  NPRIM:",JNPRIM,NGB
+         WRITE(*,*) "    EXP:",EXPJ(1),GB(1)
+         WRITE(*,*) "K SHELL:",KSH
+         WRITE(*,*) "  NPRIM:",KKNPRIM,NGC
+         WRITE(*,*) "    EXP:",EXPK(1),GC(1)
+         WRITE(*,*) "L SHELL:",LSH
+         WRITE(*,*) "  NPRIM:",LNPRIM,NGD
+         WRITE(*,*) "    EXP:",EXPL(1),GD(1)
+         WRITE(*,*) "RNMINT:",RNINT(1)
+         WRITE(*,*) "--------------------------------------------------"
+      END IF
+C )
       RETURN
 C
       END

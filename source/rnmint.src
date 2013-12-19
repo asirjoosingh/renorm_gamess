@@ -51,21 +51,21 @@ C*******************************************************************************
 C Generate overlap distributions for electron 1 (centred on P1==P)
 C p1 == p, q1 == q
       allocate(Ei1l1(0:I1+L1),Ej1m1(0:J1+M1),Ek1n1(0:K1+N1))
-      call ovlapdistr(I1,L1,alp1,beta1,A1,B1,p1,q1,
+      call ovlapdistr(I1,L1,alp1,beta1,A1(1),B1(1),p1,q1,
      *             P1mat(1),Q1mat(1),xKab1(1),Ei1l1)
-      call ovlapdistr(J1,M1,alp1,beta1,A1,B1,p1,q1,
+      call ovlapdistr(J1,M1,alp1,beta1,A1(2),B1(2),p1,q1,
      *             P1mat(2),Q1mat(2),xKab1(2),Ej1m1)
-      call ovlapdistr(K1,N1,alp1,beta1,A1,B1,p1,q1,
+      call ovlapdistr(K1,N1,alp1,beta1,A1(3),B1(3),p1,q1,
      *             P1mat(3),Q1mat(3),xKab1(3),Ek1n1)
 
 C Generate overlap distributions for electron 2 (centred on P2==P)
 C p2 == p', q2 == q'
       allocate(Ei2l2(0:I2+L2),Ej2m2(0:J2+M2),Ek2n2(0:K2+N2))
-      call ovlapdistr(I2,L2,alp2,beta2,A2,B2,p2,q2,
+      call ovlapdistr(I2,L2,alp2,beta2,A2(1),B2(1),p2,q2,
      *             P2mat(1),Q2mat(1),xKab2(1),Ei2l2)
-      call ovlapdistr(J2,M2,alp2,beta2,A2,B2,p2,q2,
+      call ovlapdistr(J2,M2,alp2,beta2,A2(2),B2(2),p2,q2,
      *             P2mat(2),Q2mat(2),xKab2(2),Ej2m2)
-      call ovlapdistr(K2,N2,alp2,beta2,A2,B2,p2,q2,
+      call ovlapdistr(K2,N2,alp2,beta2,A2(3),B2(3),p2,q2,
      *             P2mat(3),Q2mat(3),xKab2(3),Ek2n2)
 
 C Calculate numerical prefactor for integral over spherical Gaussians
