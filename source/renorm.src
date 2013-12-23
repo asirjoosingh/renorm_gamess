@@ -85,16 +85,17 @@ C
       IMPLICIT DOUBLE PRECISION(A-H,O-Z)
 C
       PARAMETER (ZERO=0.0D+00,ONE=1.0D+00,TWO=2.0D+00)
-      PARAMETER (TWOPI32=15.749609945722419D+00)      ! (2pi)^(3/2)
+      PARAMETER (SQRT3=1.73205080756888D+00,SQRT5=2.23606797749979D+00)
       PARAMETER (MXSH=5000, MXGTOT=20000, MXATM=2000)
       PARAMETER (MXGSH=30)
       LOGICAL GOPARR,DSKWRK,MASWRK
       LOGICAL LCFLAG,LRINT
       LOGICAL RNMDBG
-      DIMENSION IA(3),JA(3),KKA(3),LA(3)
-      DIMENSION A1(3),A2(3),B1(3),B2(3)
+      LOGICAL NORM
+      DIMENSION AI(3),AJ(3),AK(3),AL(3)
       DIMENSION RNINT(*)
 C
+      COMMON /ERIOUT/ INU,JNU,KNU,LNU,NGTI,NGTJ,NGTK,NGTL
       COMMON /INFOA / NAT,ICH,MUL,NUM,NQMT,NE,NA,NB,
      *                ZAN(MXATM),C(3,MXATM),IAN(MXATM)
       COMMON /IOFILE/ IR,IW,IP,IS,IPK,IDAF,NAV,IODA(950)
@@ -103,233 +104,260 @@ C
      *                CF(MXGTOT),CG(MXGTOT),CH(MXGTOT),CI(MXGTOT),
      *                KSTART(MXSH),KATOM(MXSH),KTYPE(MXSH),KNG(MXSH),
      *                KLOC(MXSH),KMIN(MXSH),KMAX(MXSH),NSHELL
+      COMMON /OUTPUT/ NPRINT,ITOL,ICUT,NORMF,NORMP,NOPK
       COMMON /PAR   / ME,MASTER,NPROC,IBTYP,IPTIM,GOPARR,DSKWRK,MASWRK
       COMMON /RENORM/ IRNORM,RNCUT,RNCOF1
       COMMON /RNPRM / EXPI(MXSH),EXPJ(MXSH),EXPK(MXSH),EXPL(MXSH),
-     *                COFI(MXSH),COFJ(MXSH),COFK(MXSH),COFL(MXSH)
-C      COMMON /SHLINF/  GA(MXGSH),CSA(MXGSH),CPA(MXGSH),CDA(MXGSH),
-C     *                CFA(MXGSH),CGA(MXGSH),CHA(MXGSH),CIA(MXGSH),
-C     *                 GB(MXGSH),CSB(MXGSH),CPB(MXGSH),CDB(MXGSH),
-C     *                CFB(MXGSH),CGB(MXGSH),CHB(MXGSH),CIB(MXGSH),
-C     *                 GC(MXGSH),CSC(MXGSH),CPC(MXGSH),CDC(MXGSH),
-C     *                CFC(MXGSH),CGC(MXGSH),CHC(MXGSH),CIC(MXGSH),
-C     *                 GD(MXGSH),CSD(MXGSH),CPD(MXGSH),CDD(MXGSH),
-C     *                CFD(MXGSH),CGD(MXGSH),CHD(MXGSH),CID(MXGSH),
-C     *                AX,AY,AZ,BX,BY,BZ,RAB,CX,CY,CZ,DX,DY,DZ,RCD,
-C     *                NGA,NGB,NGC,NGD
+     *                COFI(MXSH,MXGSH),COFJ(MXSH,MXGSH),
+     *                COFK(MXSH,MXGSH),COFL(MXSH,MXGSH),
+     *                ITYP,JTYP,KTYP,LTYP,AI,AJ,AK,AL,
+     *                INPRIM,JNPRIM,KNPRIM,LNPRIM,ISTART,IEND,
+     *                JSTART,JEND,KKSTART,KKEND,LSTART,LEND,
+     *                IX(MXGSH),IY(MXGSH),IZ(MXGSH),
+     *                JX(MXGSH),JY(MXGSH),JZ(MXGSH),
+     *                KX(MXGSH),KY(MXGSH),KZ(MXGSH),
+     *                LX(MXGSH),LY(MXGSH),LZ(MXGSH)
+      COMMON /RNOUT / IDIM,JDIM,KDIM,LDIM,IMIN,JMIN,KKMIN,LMIN,
+     *                IMAX,JMAX,KKMAX,LMAX
+      COMMON /SHLINF/  GA(MXGSH),CSA(MXGSH),CPA(MXGSH),CDA(MXGSH),
+     *                CFA(MXGSH),CGA(MXGSH),CHA(MXGSH),CIA(MXGSH),
+     *                 GB(MXGSH),CSB(MXGSH),CPB(MXGSH),CDB(MXGSH),
+     *                CFB(MXGSH),CGB(MXGSH),CHB(MXGSH),CIB(MXGSH),
+     *                 GC(MXGSH),CSC(MXGSH),CPC(MXGSH),CDC(MXGSH),
+     *                CFC(MXGSH),CGC(MXGSH),CHC(MXGSH),CIC(MXGSH),
+     *                 GD(MXGSH),CSD(MXGSH),CPD(MXGSH),CDD(MXGSH),
+     *                CFD(MXGSH),CGD(MXGSH),CHD(MXGSH),CID(MXGSH),
+     *                AX,AY,AZ,BX,BY,BZ,RAB,CX,CY,CZ,DX,DY,DZ,RCD,
+     *                NGA,NGB,NGC,NGD
 C
       RNMDBG=.FALSE.
+C
+C NORMALIZE BASIS FUNCTIONS ACCORDING TO USER INPUT
+      NORM = NORMF .NE. 1 .OR. NORMP .NE. 1
 C
 C TRANSFER BASIS SET INFORMATION TO RNPRM COMMON BLOCK FOR EACH SHELL
 C
 C I SHELL
 C
       IAT=KATOM(ISH)       ! atom index to which I shell belongs
-      IA(1)=C(1,IAT)       ! x coordinate of atom
-      IA(2)=C(2,IAT)       ! y coordinate of atom
-      IA(3)=C(3,IAT)       ! z coordinate of atom
+      AI(1)=C(1,IAT)       ! x coordinate of atom
+      AI(2)=C(2,IAT)       ! y coordinate of atom
+      AI(3)=C(3,IAT)       ! z coordinate of atom
       INPRIM=KNG(ISH)      ! number of primitives in I shell
       ISTART=KSTART(ISH)   ! loc of first prim of I shell in NSHEL vars
       IEND=ISTART+INPRIM-1 ! loc of last prim of I shell in NSHEL vars
-      ITYPE=KTYPE(ISH)     ! type of shell (S=1,P=2,...)
-      DO II=ISTART,IEND
-         EXPI(II-ISTART+1)=EX(II)
-         IF(ITYPE.EQ.1) THEN
-            COFI(II-ISTART+1)=CS(II)
-         ELSE IF(ITYPE.EQ.2) THEN     !!!!  FIX FOR  !!!!
-            COFI(II-ISTART+1)=CP(II)    !!!!  L SHELLS !!!!
-         ELSE IF(ITYPE.EQ.3) THEN
-            COFI(II-ISTART+1)=CD(II)
-         ELSE IF(ITYPE.EQ.4) THEN
-            COFI(II-ISTART+1)=CF(II)
-         ELSE IF(ITYPE.EQ.5) THEN
-            COFI(II-ISTART+1)=CG(II)
-         ELSE IF(ITYPE.EQ.6) THEN
-            COFI(II-ISTART+1)=CH(II)
-         ELSE IF(ITYPE.EQ.7) THEN
-            COFI(II-ISTART+1)=CI(II)
-         END IF
+      ITYP=KTYPE(ISH)      ! type of shell (S=1,P=2,...)
+      IMIN=KMIN(ISH)       ! determines type of shell and
+      IMAX=KMAX(ISH)       ! required normalization
+      IDIM=IMAX-IMIN+1
+      IF(ITYP.GT.4) THEN
+         WRITE(IW,*) "RENORM CALCULATIONS SUPPORT UP TO F SHELLS"
+         CALL ABRT
+      END IF
+      DO I=IMIN,IMAX       ! contracted indices
+         CALL RNMANGMOM(I,IX(I-IMIN+1),IY(I-IMIN+1),IZ(I-IMIN+1))
+         DO II=ISTART,IEND ! primitive indices
+            EXPI(II-ISTART+1)=EX(II)
+            IF(I.EQ.1) THEN
+               COFI(II-ISTART+1,I-IMIN+1)=CS(II)
+            ELSE IF ((I.GE.2).AND.(I.LE.4)) THEN
+               COFI(II-ISTART+1,I-IMIN+1)=CP(II)
+            ELSE IF ((I.GE.5).AND.(I.LE.10)) THEN
+               COFI(II-ISTART+1,I-IMIN+1)=CD(II)
+               IF((I.GE.8).AND.(I.LE.10).AND.(NORM)) THEN   ! dxy,dxz,dyz
+                  COFI(II-ISTART+1,I-IMIN+1)=
+     x            COFI(II-ISTART+1,I-IMIN+1)*SQRT3
+               END IF
+            ELSE IF ((I.GE.11).AND.(I.LE.20)) THEN
+               COFI(II-ISTART+1,I-IMIN+1)=CF(II)
+               IF((I.GE.14).AND.(I.LE.19).AND.(NORM)) THEN   ! fxxy,fxxz,...
+                  COFI(II-ISTART+1,I-IMIN+1)=
+     x            COFI(II-ISTART+1,I-IMIN+1)*SQRT5
+               ELSE IF((I.EQ.20).AND.(NORM)) THEN            ! fxyz
+                  COFI(II-ISTART+1,I-IMIN+1)=
+     x            COFI(II-ISTART+1,I-IMIN+1)*SQRT3*SQRT5
+               END IF
+            END IF
+         END DO
       END DO
 C
 C J SHELL
 C
       JAT=KATOM(JSH)       ! atom index to which J shell belongs
-      JA(1)=C(1,JAT)       ! x coordinate of atom
-      JA(2)=C(2,JAT)       ! y coordinate of atom
-      JA(3)=C(3,JAT)       ! z coordinate of atom
+      AJ(1)=C(1,JAT)       ! x coordinate of atom
+      AJ(2)=C(2,JAT)       ! y coordinate of atom
+      AJ(3)=C(3,JAT)       ! z coordinate of atom
       JNPRIM=KNG(JSH)      ! number of primitives in J shell
       JSTART=KSTART(JSH)   ! loc of first prim of J shell in NSHEL vars
       JEND=JSTART+JNPRIM-1 ! loc of last prim of J shell in NSHEL vars
-      JTYPE=KTYPE(JSH)     ! type of shell (S=1,P=2,...)
-      DO JJ=JSTART,JEND
-         EXPJ(JJ-JSTART+1)=EX(JJ)
-         IF(JTYPE.EQ.1) THEN
-            COFJ(JJ-JSTART+1)=CS(JJ)
-         ELSE IF(JTYPE.EQ.2) THEN     !!!!  FIX FOR  !!!!
-            COFJ(JJ-JSTART+1)=CP(JJ)    !!!!  L SHELLS !!!!
-         ELSE IF(JTYPE.EQ.3) THEN
-            COFJ(JJ-JSTART+1)=CD(JJ)
-         ELSE IF(JTYPE.EQ.4) THEN
-            COFJ(JJ-JSTART+1)=CF(JJ)
-         ELSE IF(JTYPE.EQ.5) THEN
-            COFJ(JJ-JSTART+1)=CG(JJ)
-         ELSE IF(JTYPE.EQ.6) THEN
-            COFJ(JJ-JSTART+1)=CH(JJ)
-         ELSE IF(JTYPE.EQ.7) THEN
-            COFJ(JJ-JSTART+1)=CI(JJ)
-         END IF
+      JTYP=KTYPE(JSH)      ! type of shell (S=1,P=2,...)
+      JMIN=KMIN(JSH)       ! determines type of shell and
+      JMAX=KMAX(JSH)       ! required normalization
+      JDIM=JMAX-JMIN+1
+      IF(JTYP.GT.4) THEN
+         WRITE(IW,*) "RENORM CALCULATIONS SUPPORT UP TO F SHELLS"
+         CALL ABRT
+      END IF
+      DO J=JMIN,JMAX       ! contracted indices
+         CALL RNMANGMOM(J,JX(J-JMIN+1),JY(J-JMIN+1),JZ(J-JMIN+1))
+         DO JJ=JSTART,JEND ! primitive indices
+            EXPJ(JJ-JSTART+1)=EX(JJ)
+            IF(J.EQ.1) THEN
+               COFJ(JJ-JSTART+1,J-JMIN+1)=CS(JJ)
+            ELSE IF ((J.GE.2).AND.(J.LE.4)) THEN
+               COFJ(JJ-JSTART+1,J-JMIN+1)=CP(JJ)
+            ELSE IF ((J.GE.5).AND.(J.LE.10)) THEN
+               COFJ(JJ-JSTART+1,J-JMIN+1)=CD(JJ)
+               IF((J.GE.8).AND.(J.LE.10).AND.(NORM)) THEN   ! dxy,dxz,dyz
+                  COFJ(JJ-JSTART+1,J-JMIN+1)=
+     x            COFJ(JJ-JSTART+1,J-JMIN+1)*SQRT3
+               END IF
+            ELSE IF ((J.GE.11).AND.(J.LE.20)) THEN
+               COFJ(JJ-JSTART+1,J-JMIN+1)=CF(JJ)
+               IF((J.GE.14).AND.(J.LE.19).AND.(NORM)) THEN   ! fxxy,fxxz,...
+                  COFJ(JJ-JSTART+1,J-JMIN+1)=
+     x            COFJ(JJ-JSTART+1,J-JMIN+1)*SQRT5
+               ELSE IF((J.EQ.20).AND.(NORM)) THEN            ! fxyz
+                  COFJ(JJ-JSTART+1,J-JMIN+1)=
+     x            COFJ(JJ-JSTART+1,J-JMIN+1)*SQRT3*SQRT5
+               END IF
+            END IF
+         END DO
       END DO
 C
 C K SHELL
 C
-      KKAT=KATOM(KSH)         ! atom index to which K shell belongs
-      KKA(1)=C(1,KKAT)        ! x coordinate of atom
-      KKA(2)=C(2,KKAT)        ! y coordinate of atom
-      KKA(3)=C(3,KKAT)        ! z coordinate of atom
-      KKNPRIM=KNG(KSH)        ! number of primitives in K shell
-      KKSTART=KSTART(KSH)     ! loc of first prim of K shell in NSHEL vars
-      KKEND=KKSTART+KKNPRIM-1 ! loc of last prim of K shell in NSHEL vars
-      KKTYPE=KTYPE(KSH)       ! type of shell (S=1,P=2,...)
-      DO KK=KKSTART,KKEND
-         EXPK(KK-KKSTART+1)=EX(KK)
-         IF(KKTYPE.EQ.1) THEN
-            COFK(KK-KKSTART+1)=CS(KK)
-         ELSE IF(KKTYPE.EQ.2) THEN     !!!!  FIX FOR  !!!!
-            COFK(KK-KKSTART+1)=CP(KK)    !!!!  L SHELLS !!!!
-         ELSE IF(KKTYPE.EQ.3) THEN
-            COFK(KK-KKSTART+1)=CD(KK)
-         ELSE IF(KKTYPE.EQ.4) THEN
-            COFK(KK-KKSTART+1)=CF(KK)
-         ELSE IF(KKTYPE.EQ.5) THEN
-            COFK(KK-KKSTART+1)=CG(KK)
-         ELSE IF(KKTYPE.EQ.6) THEN
-            COFK(KK-KKSTART+1)=CH(KK)
-         ELSE IF(KKTYPE.EQ.7) THEN
-            COFK(KK-KKSTART+1)=CI(KK)
-         END IF
+      KAT=KATOM(KSH)         ! atom index to which K shell belongs
+      AK(1)=C(1,KAT)         ! x coordinate of atom
+      AK(2)=C(2,KAT)         ! y coordinate of atom
+      AK(3)=C(3,KAT)         ! z coordinate of atom
+      KNPRIM=KNG(KSH)        ! number of primitives in K shell
+      KKSTART=KSTART(KSH)    ! loc of first prim of K shell in NSHEL vars
+      KKEND=KKSTART+KNPRIM-1 ! loc of last prim of K shell in NSHEL vars
+      KTYP=KTYPE(KSH)        ! type of shell (S=1,P=2,...)
+      KKMIN=KMIN(KSH)        ! determines type of shell and
+      KKMAX=KMAX(KSH)        ! required normalization
+      KDIM=KKMAX-KKMIN+1
+      IF(KTYP.GT.4) THEN
+         WRITE(IW,*) "RENORM CALCULATIONS SUPPORT UP TO F SHELLS"
+         CALL ABRT
+      END IF
+      DO K=KKMIN,KKMAX       ! contracted indices
+         CALL RNMANGMOM(K,KX(K-KKMIN+1),KY(K-KKMIN+1),KZ(K-KKMIN+1))
+         DO KK=KKSTART,KKEND ! primitive indices
+            EXPK(KK-KKSTART+1)=EX(KK)
+            IF(K.EQ.1) THEN
+               COFK(KK-KKSTART+1,K-KKMIN+1)=CS(KK)
+            ELSE IF ((K.GE.2).AND.(K.LE.4)) THEN
+               COFK(KK-KKSTART+1,K-KKMIN+1)=CP(KK)
+            ELSE IF ((K.GE.5).AND.(K.LE.10)) THEN
+               COFK(KK-KKSTART+1,K-KKMIN+1)=CD(KK)
+               IF((K.GE.8).AND.(K.LE.10).AND.(NORM)) THEN   ! dxy,dxz,dyz
+                  COFK(KK-KKSTART+1,K-KKMIN+1)=
+     x            COFK(KK-KKSTART+1,K-KKMIN+1)*SQRT3
+               END IF
+            ELSE IF ((K.GE.11).AND.(K.LE.20)) THEN
+               COFK(KK-KKSTART+1,K-KKMIN+1)=CF(KK)
+               IF((K.GE.14).AND.(K.LE.19).AND.(NORM)) THEN   ! fxxy,fxxz,...
+                  COFK(KK-KKSTART+1,K-KKMIN+1)=
+     x            COFK(KK-KKSTART+1,K-KKMIN+1)*SQRT5
+               ELSE IF((K.EQ.20).AND.(NORM)) THEN            ! fxyz
+                  COFK(KK-KKSTART+1,K-KKMIN+1)=
+     x            COFK(KK-KKSTART+1,K-KKMIN+1)*SQRT3*SQRT5
+               END IF
+            END IF
+         END DO
       END DO
 C
 C L SHELL
 C
       LAT=KATOM(LSH)       ! atom index to which L shell belongs
-      LA(1)=C(1,LAT)       ! x coordinate of atom
-      LA(2)=C(2,LAT)       ! y coordinate of atom
-      LA(3)=C(3,LAT)       ! z coordinate of atom
+      AL(1)=C(1,LAT)       ! x coordinate of atom
+      AL(2)=C(2,LAT)       ! y coordinate of atom
+      AL(3)=C(3,LAT)       ! z coordinate of atom
       LNPRIM=KNG(LSH)      ! number of primitives in L shell
       LSTART=KSTART(LSH)   ! loc of first prim of L shell in NSHEL vars
       LEND=LSTART+LNPRIM-1 ! loc of last prim of L shell in NSHEL vars
-      LTYPE=KTYPE(LSH)     ! type of shell (S=1,P=2,...)
-      DO LL=LSTART,LEND
-         EXPL(LL-LSTART+1)=EX(LL)
-         IF(LTYPE.EQ.1) THEN
-            COFL(LL-LSTART+1)=CS(LL)
-         ELSE IF(LTYPE.EQ.2) THEN     !!!!  FIX FOR  !!!!
-            COFL(LL-LSTART+1)=CP(LL)    !!!!  L SHELLS !!!!
-         ELSE IF(LTYPE.EQ.3) THEN
-            COFL(LL-LSTART+1)=CD(LL)
-         ELSE IF(LTYPE.EQ.4) THEN
-            COFL(LL-LSTART+1)=CF(LL)
-         ELSE IF(LTYPE.EQ.5) THEN
-            COFL(LL-LSTART+1)=CG(LL)
-         ELSE IF(LTYPE.EQ.6) THEN
-            COFL(LL-LSTART+1)=CH(LL)
-         ELSE IF(LTYPE.EQ.7) THEN
-            COFL(LL-LSTART+1)=CI(LL)
-         END IF
+      LTYP=KTYPE(LSH)     ! type of shell (S=1,P=2,...)
+      LMIN=KMIN(LSH)       ! determines type of shell and
+      LMAX=KMAX(LSH)       ! required normalization
+      LDIM=LMAX-LMIN+1
+      IF(LTYP.GT.4) THEN
+         WRITE(IW,*) "RENORM CALCULATIONS SUPPORT UP TO F SHELLS"
+         CALL ABRT
+      END IF
+      DO L=LMIN,LMAX       ! contracted indices
+         CALL RNMANGMOM(L,LX(L-LMIN+1),LY(L-LMIN+1),LZ(L-LMIN+1))
+         DO LL=LSTART,LEND ! primitive indices
+            EXPL(LL-LSTART+1)=EX(LL)
+            IF(L.EQ.1) THEN
+               COFL(LL-LSTART+1,L-LMIN+1)=CS(LL)
+            ELSE IF ((L.GE.2).AND.(L.LE.4)) THEN
+               COFL(LL-LSTART+1,L-LMIN+1)=CP(LL)
+            ELSE IF ((L.GE.5).AND.(L.LE.10)) THEN
+               COFL(LL-LSTART+1,L-LMIN+1)=CD(LL)
+               IF((L.GE.8).AND.(L.LE.10).AND.(NORM)) THEN   ! dxy,dxz,dyz
+                  COFL(LL-LSTART+1,L-LMIN+1)=
+     x            COFL(LL-LSTART+1,L-LMIN+1)*SQRT3
+               END IF
+            ELSE IF ((L.GE.11).AND.(L.LE.20)) THEN
+               COFL(LL-LSTART+1,L-LMIN+1)=CF(LL)
+               IF((L.GE.14).AND.(L.LE.19).AND.(NORM)) THEN   ! fxxy,fxxz,...
+                  COFL(LL-LSTART+1,L-LMIN+1)=
+     x            COFL(LL-LSTART+1,L-LMIN+1)*SQRT5
+               ELSE IF((L.EQ.20).AND.(NORM)) THEN            ! fxyz
+                  COFL(LL-LSTART+1,L-LMIN+1)=
+     x            COFL(LL-LSTART+1,L-LMIN+1)*SQRT3*SQRT5
+               END IF
+            END IF
+         END DO
       END DO
 
-CCC TAKE INFORMATION FROM SHELL ROUTINE SETUP
-CCC         GA = EXPONENTS OF ALL PRIMS IN I SHELL
-CCC        CXA = CONTR COEFFS OF ALL X PRIMS IN I SHELL, X=S,P,...
-CCC   AX,AY,AZ = COORDINATES OF ATOM CONTAINING I SHELL
-CCC        NGA = NUMBER OF PRIMS IN I SHELL
-CCC   'B' VARIABLES CORRESPOND TO J SHELL
-CCC   'C' VARIABLES CORRESPOND TO K SHELL
-CCC   'D' VARIABLES CORRESPOND TO L SHELL
+CC TAKE INFORMATION FROM SHELL ROUTINE SETUP
+CC          GA = EXPONENTS OF ALL PRIMS IN I SHELL
+CC         CXA = CONTR COEFFS OF ALL X PRIMS IN I SHELL, X=S,P,...
+CC    AX,AY,AZ = COORDINATES OF ATOM CONTAINING I SHELL
+CC         NGA = NUMBER OF PRIMS IN I SHELL
+CC         LIT = TYPE OF I SHELL (S=1,P=2,...)
+CC   MINI,MAXI = KMIN,KMAX OF I SHELL
+CC   'B' VARIABLES CORRESPOND TO J SHELL
+CC   'C' VARIABLES CORRESPOND TO K SHELL
+CC   'D' VARIABLES CORRESPOND TO L SHELL
 C
 C CALCULATE INTEGRALS
 C
-      RNCUT2=RNCUT*RNCUT
-      GAMM=ONE/(TWO*RNCUT2)
-      COEF=RNCOF1/(TWOPI32*RNCUT)
-C
-      SUMINT=ZERO
-C
-C CURRENTLY WORKS ONLY FOR S FUNCTIONS
-C
-      DO II=1,INPRIM
-      DO JJ=1,JNPRIM
-      DO KK=1,KKNPRIM
-      DO LL=1,LNPRIM
-C
-C PRIMITIVE INFO FROM I SHELL MEMBER
-         I1=ITYPE-1
-         J1=ITYPE-1
-         K1=ITYPE-1
-         ALP1=EXPI(II)
-         A1=IA
-C
-C PRIMITIVE INFO FROM J SHELL MEMBER
-         L1=JTYPE-1
-         M1=JTYPE-1
-         N1=JTYPE-1
-         BET1=EXPJ(JJ)
-         B1=JA
-C
-C PRIMITIVE INFO FROM K SHELL MEMBER
-         I2=KKTYPE-1
-         J2=KKTYPE-1
-         K2=KKTYPE-1
-         ALP2=EXPK(KK)
-         A2=KKA
-C
-C PRIMITIVE INFO FROM L SHELL MEMBER
-         L2=LTYPE-1
-         M2=LTYPE-1
-         N2=LTYPE-1
-         BET2=EXPL(LL)
-         B2=LA
-C
-C CALCULATE PRIMITIVE INTEGRAL
-         CALL OVLAP2P1G(I1,J1,K1,ALP1,A1,
-     x                  I2,J2,K2,ALP2,A2,
-     x                  L1,M1,N1,BET1,B1,
-     x                  L2,M2,N2,BET2,B2,
-     x                  GAMM,PRIMINT)
-C FOR TESTING (
-C         CALL GFVEE(I1,J1,K1,ALP1,A1,
-C     x              I2,J2,K2,ALP2,A2,
-C     x              L1,M1,N1,BET1,B1,
-C     x              L2,M2,N2,BET2,B2,
-C     x              PRIMINT)
-C )
-C
-         SUMINT=SUMINT+COFI(II)*COFJ(JJ)*COFK(KK)*COFL(LL)*PRIMINT
-C
-      END DO
-      END DO
-      END DO
-      END DO
-C
-C CURRENTLY ONLY FOR S FUNCTIONS
-      RNINT(1)=COEF*SUMINT
+         CALL RNMCONTRINT(RNINT,ICOUNT)
 C
 C ARS(
       IF (RNMDBG) THEN
          WRITE(*,*) "--------------------------------------------------"
-         WRITE(*,*) "I SHELL:",ISH
-         WRITE(*,*) "  NPRIM:",INPRIM,NGA
+         WRITE(*,*) "I SHELL:",ISH,INU
+         WRITE(*,*) "   TYPE:",ITYP
+         WRITE(*,*) "  NCONT:",IDIM
+         WRITE(*,*) "  NPRIM:",INPRIM,NGA,NGTI
          WRITE(*,*) "    EXP:",EXPI(1),GA(1)
-         WRITE(*,*) "J SHELL:",JSH
-         WRITE(*,*) "  NPRIM:",JNPRIM,NGB
+         WRITE(*,*) "   CENT:",AI(1),AI(2),AI(3)
+         WRITE(*,*) "J SHELL:",JSH,JNU
+         WRITE(*,*) "   TYPE:",JTYP
+         WRITE(*,*) "  NCONT:",JDIM
+         WRITE(*,*) "  NPRIM:",JNPRIM,NGB,NGTJ
          WRITE(*,*) "    EXP:",EXPJ(1),GB(1)
-         WRITE(*,*) "K SHELL:",KSH
-         WRITE(*,*) "  NPRIM:",KKNPRIM,NGC
+         WRITE(*,*) "   CENT:",AJ(1),AJ(2),AJ(3)
+         WRITE(*,*) "K SHELL:",KSH,KNU
+         WRITE(*,*) "   TYPE:",KTYP
+         WRITE(*,*) "  NCONT:",KDIM
+         WRITE(*,*) "  NPRIM:",KNPRIM,NGC,NGTK
          WRITE(*,*) "    EXP:",EXPK(1),GC(1)
-         WRITE(*,*) "L SHELL:",LSH
-         WRITE(*,*) "  NPRIM:",LNPRIM,NGD
+         WRITE(*,*) "   CENT:",AK(1),AK(2),AK(3)
+         WRITE(*,*) "L SHELL:",LSH,LNU
+         WRITE(*,*) "   TYPE:",LTYP
+         WRITE(*,*) "  NCONT:",LDIM
+         WRITE(*,*) "  NPRIM:",LNPRIM,NGD,NGTL
          WRITE(*,*) "    EXP:",EXPL(1),GD(1)
-         WRITE(*,*) "RNMINT:",RNINT(1)
+         WRITE(*,*) "   CENT:",AL(1),AL(2),AL(3)
+         DO II=1,ICOUNT
+            WRITE(*,*) "I,RNMINT:",II,RNINT(II)
+         END DO
          WRITE(*,*) "--------------------------------------------------"
       END IF
 C )
@@ -337,3 +365,213 @@ C )
 C
       END
 C
+C*MODULE RENORM *DECK RNMANGMOM
+      SUBROUTINE RNMANGMOM(I,IX,IY,IZ)
+C
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+C
+C INPUT I IS GIVEN AS THE APPROPRIATE ENTRY IN KMIN,...,KMAX NOTATION
+C
+      IF (I.EQ.1) THEN        ! s
+       IX=0
+       IY=0
+       IZ=0
+      ELSE IF (I.EQ.2) THEN   ! px
+       IX=1
+       IY=0
+       IZ=0
+      ELSE IF (I.EQ.3) THEN   ! py
+       IX=0
+       IY=1
+       IZ=0
+      ELSE IF (I.EQ.4) THEN   ! pz
+       IX=0
+       IY=0
+       IZ=1
+      ELSE IF (I.EQ.5) THEN   ! dxx
+       IX=2
+       IY=0
+       IZ=0
+      ELSE IF (I.EQ.6) THEN   ! dyy
+       IX=0
+       IY=2
+       IZ=0
+      ELSE IF (I.EQ.7) THEN   ! dzz
+       IX=0
+       IY=0
+       IZ=2
+      ELSE IF (I.EQ.8) THEN   ! dxy
+       IX=1
+       IY=1
+       IZ=0
+      ELSE IF (I.EQ.9) THEN   ! dxz
+       IX=1
+       IY=0
+       IZ=1
+      ELSE IF (I.EQ.10) THEN  ! dyz
+       IX=0
+       IY=1
+       IZ=1
+      ELSE IF (I.EQ.11) THEN  ! fxxx
+       IX=3
+       IY=0
+       IZ=0
+      ELSE IF (I.EQ.12) THEN  ! fyyy
+       IX=0
+       IY=3
+       IZ=0
+      ELSE IF (I.EQ.13) THEN  ! fzzz
+       IX=0
+       IY=0
+       IZ=3
+      ELSE IF (I.EQ.14) THEN  ! fxxy
+       IX=2
+       IY=1
+       IZ=0
+      ELSE IF (I.EQ.15) THEN  ! fxxz
+       IX=2
+       IY=0
+       IZ=1
+      ELSE IF (I.EQ.16) THEN  ! fyyx
+       IX=1
+       IY=2
+       IZ=0
+      ELSE IF (I.EQ.17) THEN  ! fyyz
+       IX=0
+       IY=2
+       IZ=1
+      ELSE IF (I.EQ.18) THEN  ! fzzx
+       IX=1
+       IY=0
+       IZ=2
+      ELSE IF (I.EQ.19) THEN  ! fzzy
+       IX=0
+       IY=1
+       IZ=2
+      ELSE IF (I.EQ.20) THEN  ! fxyz
+       IX=1
+       IY=1
+       IZ=1
+      END IF
+C
+      RETURN
+C
+      END
+C
+C*MODULE RENORM *DECK RNMCONTRINT
+      SUBROUTINE RNMCONTRINT(RNINT,ICOUNT)
+C
+      IMPLICIT DOUBLE PRECISION(A-H,O-Z)
+C
+      PARAMETER (ZERO=0.0D+00,ONE=1.0D+00,TWO=2.0D+00)
+      PARAMETER (TWOPI32=15.749609945722419D+00)      ! (2pi)^(3/2)
+      PARAMETER (MXSH=5000, MXGTOT=20000, MXATM=2000)
+      PARAMETER (MXGSH=30)
+      DIMENSION AI(3),AJ(3),AK(3),AL(3)
+      DIMENSION A1(3),A2(3),B1(3),B2(3)
+      DIMENSION RNINT(*)
+C
+      COMMON /RENORM/ IRNORM,RNCUT,RNCOF1
+      COMMON /RNPRM / EXPI(MXSH),EXPJ(MXSH),EXPK(MXSH),EXPL(MXSH),
+     *                COFI(MXSH,MXGSH),COFJ(MXSH,MXGSH),
+     *                COFK(MXSH,MXGSH),COFL(MXSH,MXGSH),
+     *                ITYP,JTYP,KTYP,LTYP,AI,AJ,AK,AL,
+     *                INPRIM,JNPRIM,KNPRIM,LNPRIM,ISTART,IEND,
+     *                JSTART,JEND,KKSTART,KKEND,LSTART,LEND,
+     *                IX(MXGSH),IY(MXGSH),IZ(MXGSH),
+     *                JX(MXGSH),JY(MXGSH),JZ(MXGSH),
+     *                KX(MXGSH),KY(MXGSH),KZ(MXGSH),
+     *                LX(MXGSH),LY(MXGSH),LZ(MXGSH)
+      COMMON /RNOUT / IDIM,JDIM,KDIM,LDIM,IMIN,JMIN,KKMIN,LMIN,
+     *                IMAX,JMAX,KKMAX,LMAX
+C
+      RNCUT2=RNCUT*RNCUT
+      GAMM=ONE/(TWO*RNCUT2)
+      COEF=RNCOF1/(TWOPI32*RNCUT)
+C
+C ITERATE OVER ANGULAR MOMENTUM ARRAYS (BUILT IN CORRECT ORDER)
+C
+      ICOUNT=0
+C
+      DO I=1,IDIM
+      DO J=1,JDIM
+      DO K=1,KDIM
+      DO L=1,LDIM
+C
+         SUMINT=ZERO
+C
+         DO II=1,INPRIM
+         DO JJ=1,JNPRIM
+         DO KK=1,KNPRIM
+         DO LL=1,LNPRIM
+C
+C PRIMITIVE INFO FROM I SHELL MEMBER
+            I1=IX(I)
+            J1=IY(I)
+            K1=IZ(I)
+            ALP1=EXPI(II)
+            A1=AI
+C
+C PRIMITIVE INFO FROM J SHELL MEMBER
+            L1=JX(J)
+            M1=JY(J)
+            N1=JZ(J)
+            BET1=EXPJ(JJ)
+            B1=AJ
+C
+C PRIMITIVE INFO FROM K SHELL MEMBER
+            I2=KX(K)
+            J2=KY(K)
+            K2=KZ(K)
+            ALP2=EXPK(KK)
+            A2=AK
+C
+C PRIMITIVE INFO FROM L SHELL MEMBER
+            L2=LX(L)
+            M2=LY(L)
+            N2=LZ(L)
+            BET2=EXPL(LL)
+            B2=AL
+C
+C CALCULATE PRIMITIVE INTEGRAL
+            CALL OVLAP2P1G(I1,J1,K1,ALP1,A1,
+     x                     I2,J2,K2,ALP2,A2,
+     x                     L1,M1,N1,BET1,B1,
+     x                     L2,M2,N2,BET2,B2,
+     x                     GAMM,PRIMINT)
+C
+C FOR TESTING (
+C            COEF=ONE
+C     
+C            CALL GFVEE(I1,J1,K1,ALP1,A1,
+C     x                 I2,J2,K2,ALP2,A2,
+C     x                 L1,M1,N1,BET1,B1,
+C     x                 L2,M2,N2,BET2,B2,
+C     x                 PRIMINT)
+C
+C        write(*,*) "intparams:",I,J,K,L,IDIM,JDIM,KDIM,LDIM,
+C     x            I1,J1,K1,ALP1,A1,
+C     x            I2,J2,K2,ALP2,A2,
+C     x            L1,M1,N1,BET1,B1,
+C     x            L2,M2,N2,BET2,B2,
+C     x            COFI(II,I),COFJ(JJ,J),COFK(KK,K),COFL(LL,L),
+C )
+C
+            SUMINT=SUMINT+COFI(II,I)*COFJ(JJ,J)*
+     x                    COFK(KK,K)*COFL(LL,L)*PRIMINT
+         END DO
+         END DO
+         END DO
+         END DO
+C
+         ICOUNT=ICOUNT+1
+         RNINT(ICOUNT)=COEF*SUMINT
+C
+      END DO
+      END DO
+      END DO
+      END DO
+C
+      RETURN
+C
+      END

@@ -1,0 +1,11 @@
+Renormalization calculation results on atomic helium with varying basis sets (energies in Hartrees):
+
+RHF/ccpVDZ = -2.6818015207
+FCI/ccpvDZ = -2.6967055495
+
+RHF/ccpVTZ = -2.6912041014
+FCI/ccpVTZ = -2.711394389
+
+RHF/ccpVQZ = -2.6920368114
+FCI/ccpVQZ = -2.7132215891
+

@@ -1,0 +1,40 @@
+
+ $CONTRL SCFTYP=rhf CITYP=aldet COORD=unique units=angstrom
+         MULT=1 RUNTYP=energy exetyp=run icharg=0
+         mplevl=0 ispher=-1 maxit=200
+         inttyp=rysquad grdtyp=rysquad nprint=4 $end
+ $scf    conv=1.0d-05 soscf=.t. $end
+ $CIDET  ncore=0 nact=35 nels=2  $END
+ $RENORM irnorm=1 rncut=1.0 rncof1=20.106  $END
+ $SYSTEM TIMLIM=100000000 mwords=30 $END
+ $GUESS  GUESS=huckel norb=35 $END
+ $DATA
+
+ C1
+ HE          2.0   0.0000000000   0.0000000000   0.0000000000
+ S   4
+  1    528.5000000              0.0009400        
+  2     79.3100000              0.0072140        
+  3     18.0500000              0.0359750        
+  4      5.0850000              0.1277820        
+ S   1
+  1      1.6090000              1.0000000        
+ S   1
+  1      0.5363000              1.0000000        
+ S   1
+  1      0.1833000              1.0000000        
+ P   1
+  1      5.9940000              1.0000000        
+ P   1
+  1      1.7450000              1.0000000        
+ P   1
+  1      0.5600000              1.0000000        
+ D   1
+  1      4.2990000              1.0000000        
+ D   1
+  1      1.2230000              1.0000000        
+ F   1
+  1      2.6800000              1.0000000        
+
+ $END
+

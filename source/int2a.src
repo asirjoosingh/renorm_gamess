@@ -3279,9 +3279,11 @@ C  FOR RYS QUADRATURE CODE
 C
       LOGICAL LSHEL
       COMMON /FMCOM /XX(1)
-C ARS(
+C
+C  FOR RENORMALIZATION CODE
       COMMON /RENORM/ IRNORM,RNCUT,RNCOF1
-C )
+      COMMON /RNOUT / IDIM,JDIM,KDIM,LDIM,IMIN,JMIN,KKMIN,LMIN,
+     *                IMAX,JMAX,KKMAX,LMAX
 C
 C  FOR ERIC CODE, BUT ALL CODES MUST SET ERIOUT FOR OUTPUT ROUTINES
 C
@@ -3514,16 +3516,31 @@ C )
 C
 C ARS( calculate overlap integral correction and add to erf integral
         IF(IRNORM) THEN
-C MODIFY MEMORY CALL ONCE HIGHER ANGULAR MOMENTUM IS WORKING
            CALL VALFM(LOADFM)
            IRN2EI = LOADFM + 1
-           NEED   = MXG2
+           NEED   = MXG2*MXG2
            CALL GETFM(NEED)
            CALL RENORMINT(ISH,JSH,KSH,LSH,XX(IRN2EI))
-           GHONDO(1+NORGH)=GHONDO(1+NORGH)+XX(IRN2EI)
-C ( testing
-C           GHONDO(1+NORGH)=XX(IRN2EI)
-C )
+           ICOUNT=0
+           II = 1
+           DO I = 1,IDIM
+             IJ  = II
+             DO J = 1,JDIM
+               IJK  = IJ
+               DO K = 1,KDIM
+                 IJKL  = IJK
+                 DO L = 1,LDIM
+                   GHONDO(IJKL+NORGH) = GHONDO(IJKL+NORGH) + 
+     x                                  XX(IRN2EI+ICOUNT)
+                   ICOUNT=ICOUNT+1
+                   IJKL = IJKL  + LSTRL
+                 END DO
+                 IJK  = IJK  + LSTRK
+               END DO
+               IJ  = IJ  + LSTRJ
+             END DO
+             II = II + LSTRI
+           END DO
            CALL RETFM(NEED)
         END IF
 C )

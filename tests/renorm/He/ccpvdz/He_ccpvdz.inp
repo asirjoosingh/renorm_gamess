@@ -1,27 +1,25 @@
 
-! rncof1=20.106 corresponds to c/(4*pi) = 1.6
-
  $CONTRL SCFTYP=rhf CITYP=aldet COORD=unique units=angstrom
          MULT=1 RUNTYP=energy exetyp=run icharg=0
          mplevl=0 ispher=-1 maxit=200
          inttyp=rysquad grdtyp=rysquad nprint=4 $end
  $scf    conv=1.0d-05 soscf=.t. $end
- $CIDET  ncore=0 nact=3 nels=2  $END
+ $CIDET  ncore=0 nact=5 nels=2  $END
  $RENORM irnorm=1 rncut=1.0 rncof1=20.106  $END
  $SYSTEM TIMLIM=100000000 mwords=30 $END
- $GUESS  GUESS=huckel norb=6 $END
+ $GUESS  GUESS=huckel norb=5 $END
  $DATA
 
  C1
  HE          2.0   0.0000000000   0.0000000000   0.0000000000
  S   3
-  1     98.1243000              0.0287452        
-  2     14.7689000              0.2080610        
-  3      3.3188300              0.8376350        
+  1     38.3600000              0.0238090        
+  2      5.7700000              0.1548910        
+  3      1.2400000              0.4699870        
  S   1
-  1      0.8740470              1.0000000        
- S   1
-  1      0.2445640              1.0000000        
+  1      0.2976000              1.0000000        
+ P   1
+  1      1.2750000              1.0000000    
 
  $END
 
