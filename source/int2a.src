@@ -3496,7 +3496,7 @@ C
         NEED  = 49*MXG2
         CALL GETFM(NEED)
 C ARS( do not permute shells if renormalization calculation
-        IF(IRNORM) THEN
+        IF(IRNORM.EQ.1) THEN
            CALL SHELLS(1,ISH,JSH,KSH,LSH,.FALSE.)
            CALL SHELLS(2,ISH,JSH,KSH,LSH,.FALSE.)
         ELSE
@@ -3515,7 +3515,7 @@ C )
         CALL RETFM(NEED)
 C
 C ARS( calculate overlap integral correction and add to erf integral
-        IF(IRNORM) THEN
+        IF(IRNORM.EQ.1) THEN
            CALL VALFM(LOADFM)
            IRN2EI = LOADFM + 1
            NEED   = MXG2*MXG2

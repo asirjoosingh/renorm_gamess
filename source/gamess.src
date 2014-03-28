@@ -1085,8 +1085,7 @@ C
       IF(DFTYPE.EQ.RNONE) THEN
         LCFLAG=.FALSE.
 C ARS(
-        IF(.NOT.(IRNORM))
-     x  LRINT=.FALSE.
+        IF(IRNORM.EQ.0)  LRINT=.FALSE.
 C )
       ENDIF
 c
